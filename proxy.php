@@ -574,29 +574,6 @@ if ($uri === '/print/count')    { echo json_encode(['count' => 0]);          exi
 if ($uri === '/print/printers') { echo json_encode(['printers' => []]);       exit(); }
 if ($uri === '/print/job')      { echo json_encode(['ok' => true, 'count' => 0]); exit(); }
 
-// ── Apple Pay domain verification (Square) ──
-if ($uri === '/.well-known/apple-developer-merchantid-domain-association' || 
-    $uri === '/apple-developer-merchantid-domain-association') {
-    header('Content-Type: application/json');
-    header('Cache-Control: no-cache, no-store, must-revalidate, max-age=0');
-    header('Pragma: no-cache');
-    header('Expires: Thu, 01 Jan 1970 00:00:00 GMT');
-    header('Access-Control-Allow-Origin: *');
-    header('Access-Control-Allow-Methods: GET, HEAD, OPTIONS');
-    header('Access-Control-Allow-Headers: Content-Type, Authorization');
-    
-    $file = __DIR__ . '/.well-known/apple-developer-merchantid-domain-association';
-    if (!file_exists($file)) {
-        http_response_code(404);
-        echo json_encode(['error' => 'Verification file not found']);
-        exit();
-    }
-    
-    $content = file_get_contents($file);
-    header('Content-Length: ' . strlen($content));
-    echo $content;
-    exit();
-}
 
 // ── /printbox/* ──
 if (strpos($uri, '/printbox/') === 0) {

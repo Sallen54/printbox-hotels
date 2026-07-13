@@ -605,28 +605,35 @@ export default function ViewerApp() {
       {/* Header y galería */}
       <header className="viewer-header">
         <div className="viewer-header-top">
-          <div className="viewer-header-brand">
-            <img src="/assets/IcHeaderWhite.png" alt="Printbox Hotels" className="header-logo" />
-            <div>
-              <span className="brand-main">PRINTBOX</span>
-              <span className="brand-sub">HOTELS</span>
+          <div className="viewer-header-lang-block">
+            <div className="viewer-header-lang-icon"><i className="bi bi-compass" /></div>
+            <div className="viewer-header-lang-text">
+              <span>🇪🇸 ¡Reserva tus fotos del hotel!</span>
+              <span>🇬🇧 Book your hotel photos!</span>
             </div>
           </div>
-        </div>
-        <div className="viewer-header-inner">
-          <div className="viewer-header-subtitle">
-            {uuid ? 'Selecciona tu foto para imprimir' : 'Introduce la habitación para ver las fotos'}
+          <div className="viewer-header-brand-center">
+            <img src="/assets/hotel-logo.png" alt="Logo del hotel" className="header-logo-center" />
           </div>
-          {uuid && (
+          <div className="viewer-header-lang-block viewer-header-lang-block-right">
+            <div className="viewer-header-lang-text text-end">
+              <span>🇫🇷 Réservez vos photos d'hôtel !</span>
+              <span>🇩🇪 Buchen Sie Ihre Hotel-Fotos!</span>
+            </div>
+            <div className="viewer-header-lang-icon"><i className="bi bi-globe2" /></div>
+          </div>
+        </div>
+        {uuid && (
+          <div className="viewer-header-inner">
             <div className="viewer-header-actions">
               <button className={`btn btn-sm header-action-btn ${autoplay ? 'header-action-btn-active' : ''}`} onClick={() => setAutoplay(!autoplay)} title={autoplay ? 'Detener autoplay' : 'Iniciar autoplay (15s por página)'}><i className={`bi ${autoplay ? 'bi-pause-circle-fill' : 'bi-play-circle-fill'} me-1`} />{autoplay ? 'Autoplay ON' : 'Autoplay'}</button>
               <button className="btn btn-sm header-action-btn" onClick={() => setShowQR(!showQR)} title="Mostrar QR"><i className="bi bi-qr-code me-1" />{showQR ? 'Ocultar QR' : 'Ver QR'}</button>
               <button className="btn btn-sm header-action-btn" onClick={() => setShowPrivacyModal(true)}><i className="bi bi-info-circle me-1" /> Términos</button>
-              <button className="btn btn-sm header-action-btn" onClick={() => setShowAdminModal(true)}><i className="bi bi-gear me-1" /> Configuración</button>
-              <button className="btn btn-sm header-action-btn" onClick={() => loadAllPhotos(currentPage)} disabled={loading}><i className={`bi ${loading ? 'bi-hourglass-split spin' : 'bi-arrow-repeat'} me-1`} />{loading ? 'Cargando...' : 'Refrescar'}</button>
+              <button className="btn btn-sm header-action-btn" onClick={() => setShowAdminModal(true)}><i className="bi bi-gear me-1" /> Admin</button>
+              <button className="btn btn-sm header-action-btn" onClick={() => loadAllPhotos(currentPage)} disabled={loading}><i className={`bi ${loading ? 'bi-hourglass-split spin' : 'bi-arrow-repeat'} me-1`} />{loading ? 'Cargando...' : 'Actualizar'}</button>
             </div>
-          )}
-        </div>
+          </div>
+        )}
         {error && <div className="alert alert-danger viewer-error-alert">{error}</div>}
       </header>
       {showQR && uuid && (
@@ -696,6 +703,7 @@ function PhotoCard({ photo, onSelect }) {
         <img key={`${thumb}-${retryCount}`} src={thumb} alt="" className="w-100 h-100" style={{ objectFit: 'cover' }} loading="lazy" draggable={false} onContextMenu={e=>e.preventDefault()} onDragStart={e=>e.preventDefault()} onError={handleImageError} />
       }
       <div className="viewer-photo-hint"><i className="bi bi-printer me-1" /> Imprimir</div>
+      <img src="/assets/hotel-logo.png" alt="" className="viewer-photo-badge" draggable={false} />
     </button>
   )
 }

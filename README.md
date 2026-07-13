@@ -162,7 +162,7 @@ printbox-hotels/
 ### 6.1 App Móvil (huésped) — `/mobile?habitacion=XXXX`
 
 1. El huésped escanea el QR de su habitación (o recibe la URL) → entra directo a la galería, sin escribir ningún código.
-2. Ve las fotos ya subidas de su habitación y puede seleccionarlas, o ir a la cámara y hacer fotos nuevas.
+2. Ve las fotos ya subidas de su habitación y puede seleccionarlas, o pulsar el icono de cámara de la cabecera para hacer fotos nuevas.
 3. "Ver pedido" → elige copias por foto (1/2/3) y ve el precio.
 4. Paga con tarjeta (Square) o PayPal — o si son solo fotos de cámara, puede subirlas gratis con "Subir fotos directamente".
 5. Al completar el envío, **recepción recibe automáticamente el e-mail** con miniaturas + copias + resumen del pago (ver sección 7).
@@ -235,9 +235,10 @@ Cada habitación puede tener sus propios precios y su propio email de recepción
 
 ## 9. Colores y logo del hotel
 
-- Paleta centralizada en `src/styles/global.css` (variables `--pb-bg`, `--pb-bg-alt`, `--pb-accent`, `--pb-text`) — cambiar esos valores re-tematiza toda la app.
-- Logo del hotel: sustituir `src/public/assets/hotel-logo.png` por el logo real (aparece en la cabecera de la app móvil, en el monitor y en las pantallas de éxito/carga). Recomendado: PNG con fondo transparente, cuadrado o apaisado corto.
-- Los banners con texto pintado del Monitor (`banners-AdventureSup.png`, `IcHeaderWhite.png`) **no se han rediseñado** en este trabajo — siguen con la estética de Adventures porque son imágenes con texto ya renderizado (requieren edición de imagen, no código). El texto HTML junto al logo del header (`PRINTBOX` / `HOTELS`) sí está ya actualizado.
+- **App Móvil / Printer**: tema oscuro con acento dorado, paleta centralizada en `src/styles/global.css` (variables `--pb-bg`, `--pb-bg-alt`, `--pb-accent`, `--pb-text`) — cambiar esos valores re-tematiza ambas apps.
+- **Monitor (`/viewer`)**: tema claro/crema inspirado en la maqueta del hotel (cabecera crema de 3 columnas: idioma ES/EN a la izquierda, logo del hotel al centro, idioma FR/DE a la derecha; botones de acción en pastillas; galería sobre fondo oliva oscuro; footer oscuro con precios). Variables propias en `src/viewer/Viewer.css` (`--vw-cream`, `--vw-body-bg`, `--vw-footer-bg`, `--vw-text-dark`), independientes de las de Mobile/Printer.
+- **Logo del hotel**: un único archivo, `src/public/assets/hotel-logo.png`, se reutiliza en tres sitios — cabecera de la app móvil, centro de la cabecera del Monitor, y como badge circular superpuesto en cada foto de la galería del Monitor (ver `.viewer-photo-badge` en `Viewer.css`). Sustituir ese archivo por el logo real del hotel actualiza los tres sitios a la vez. Recomendado: PNG cuadrado, fondo transparente u opaco simple (el badge lo recorta en un círculo).
+- Los modales (Admin, código de habitación, impresión, cupones) siguen con el tema oscuro heredado de Adventures — no había referencia visual para ellos y cambiarlos no formaba parte del encargo.
 
 ---
 
@@ -306,7 +307,7 @@ Verificar el número de habitación (solo dígitos, sin `ev-`). Comprobar que ex
 
 - [ ] Contratar/decidir el dominio o subdominio de producción para Printbox Hotels.
 - [ ] Primer despliegue real en IONOS y verificación de que `mail()` entrega correctamente (spam/SPF/DKIM).
-- [ ] Sustituir `hotel-logo.png` y los banners del Monitor por el diseño final del hotel.
+- [ ] Sustituir `hotel-logo.png` por el logo/monograma real del hotel (se reutiliza en cabecera móvil, cabecera del Monitor y badge de las fotos).
 - [ ] Si la entrega de e-mail por `mail()` resulta poco fiable en la práctica, valorar migrar a SMTP real.
 - [ ] PWA manifest para instalar la app móvil en pantalla de inicio.
 

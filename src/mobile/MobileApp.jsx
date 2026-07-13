@@ -193,10 +193,9 @@ export default function MobileApp() {
           setTimeout(() => handleConnectEvent(saved.eventCode), 100)
         }
       }
-    }
-    const saved = loadFromLocalStorage()
-    if (!saved?.eventCode) {
-      getConfig().then(d => { if (d.textos) applyTextos(d.textos) }).catch(() => {})
+      if (!saved?.eventCode) {
+        getConfig().then(d => { if (d.textos) applyTextos(d.textos) }).catch(() => {})
+      }
     }
   }, [])
 
@@ -606,6 +605,7 @@ export default function MobileApp() {
           <div className="flex-grow-1">
             <div className="mobile-header-title"><span style={{fontSize:'1.2rem',marginRight:'6px'}}>🇪🇸</span> Elige tus fotos para imprimir<br /><small className="text-muted"><span style={{fontSize:'1rem',marginRight:'6px'}}>🇬🇧</span> Choose your photos to print</small></div>
           </div>
+          <button className="btn btn-sm btn-outline-warning" title="Hacer foto" style={{fontSize:'18px',padding:'2px 6px'}} onClick={() => setStep(STEP_CAMERA)}><i className="bi bi-camera" /></button>
           <button className="btn btn-sm btn-outline-warning" title="Términos" style={{fontSize:'18px',padding:'2px 6px'}} onClick={() => setShowTermsModal(true)}><i className="bi bi-info-circle" /></button>
         </div>
         {loadingPhotos ? (

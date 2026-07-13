@@ -13,7 +13,7 @@ Este proyecto es una copia personalizada de **printbox-adventures** (carpeta her
 ```bash
 npm install    # instalación inicial
 npm run dev     # vite (React, :3000) + node backend/server.js (:4000), concurrently
-npm run build    # vite build -> dist/, luego scripts/copy-dist-assets.js copia .htaccess, proxy.php, .well-known, config/ dentro de dist/
+npm run build    # vite build -> dist/, luego scripts/copy-dist-assets.js copia .htaccess, proxy.php, config/ dentro de dist/
 npm run preview   # vite preview del dist/ ya generado
 ```
 
@@ -89,11 +89,13 @@ La configuración vive en `config/servidor_api.txt` / `config/textos_<habitació
 
 ### Pagos
 
-Square (Web Payments SDK en el cliente, `/process-payment` en `backend/server.js` llamando a `connect.squareupsandbox.com` — endpoint de *sandbox*) y PayPal (`createPayPalOrder`/`capturePayPalOrder`/`getPayPalConfig` en `src/shared/api.js`, respaldado por `config/paypal.json`, en gitignore — ver `config/paypal.example.json`). Apple Pay / Google Pay no están implementados.
+Square (Web Payments SDK en el cliente, `/process-payment` en `backend/server.js` llamando a `connect.squareupsandbox.com` — endpoint de *sandbox*) y PayPal (`createPayPalOrder`/`capturePayPalOrder`/`getPayPalConfig` en `src/shared/api.js`, respaldado por `config/paypal.json`, en gitignore — ver `config/paypal.example.json`). Apple Pay / Google Pay no están implementados (y a diferencia de Adventures, aquí no se ha copiado el fichero de verificación de dominio de Apple Pay — habría que añadirlo de cero si algún día se implementa, apuntando al dominio real de Hotels).
 
 ### Modelo de persistencia
 
 No hay base de datos en este repo. El estado o bien se proxea hacia la API externa de Laravel (habitaciones/fotos/pedidos), o vive en ficheros de configuración planos bajo `config/`, o en `localStorage` del navegador en MobileApp/ViewerApp (fotos seleccionadas, capturas de cámara, paso/página actual, código de habitación) para que una recarga de página o un nuevo escaneo de QR retome donde el huésped lo dejó.
+
+**Cuidado con el `useEffect` de montaje en `MobileApp.jsx`** (el que lee `?habitacion=` de la URL): solo debe llamar a `loadFromLocalStorage()` en la rama `else` (cuando NO hay parámetro de habitación en la URL). Llamarlo también de forma incondicional después del `if/else` reintroduce una condición de carrera bajo `React.StrictMode` (doble-invocado de efectos en dev): la segunda pasada relee un `localStorage` todavía no actualizado con el código de habitación recién fijado, y lo sobreescribe con un `eventCode` vacío — el aviso a recepción por e-mail llegaría con `room: ""`. No afecta a producción (StrictMode no duplica efectos fuera de dev), pero rompe cualquier prueba local. Ya corregido — no lo repitas si tocas ese efecto.
 
 ## Documentación en este repo
 

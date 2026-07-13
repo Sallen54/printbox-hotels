@@ -22,10 +22,6 @@ RewriteRule ^process-payment/?$ /proxy.php [PT,L,QSA]
 # Debug endpoint
 RewriteRule ^debug(/.*)?$ /proxy.php [PT,L,QSA]
 
-# Apple Pay domain verification - allow direct access to file
-RewriteCond %{REQUEST_URI} ^/\.well-known/apple-developer-merchantid-domain-association$
-RewriteRule ^ - [L]
-
 # APIs y proxy
 RewriteRule ^health$ /proxy.php [PT,L,QSA]
 RewriteRule ^print/.*$ /proxy.php [PT,L,QSA]
@@ -38,17 +34,6 @@ RewriteRule ^coupon/create$ /proxy.php [PT,L,QSA]
 RewriteRule ^coupon/validate$ /proxy.php [PT,L,QSA]
 RewriteRule ^coupon/redeem$ /proxy.php [PT,L,QSA]
 RewriteRule ^coupon/list$ /proxy.php [PT,L,QSA]
-
-# Apple Pay domain verification - headers
-<Files "apple-developer-merchantid-domain-association">
-    Header always set Content-Type "text/plain"
-    Header always set Cache-Control "no-cache, no-store, must-revalidate, max-age=0"
-    Header always set Pragma "no-cache"
-    Header always set Expires "Thu, 01 Jan 1970 00:00:00 GMT"
-    Header always set Access-Control-Allow-Origin "*"
-    Header always set Access-Control-Allow-Methods "GET, HEAD, OPTIONS"
-    Header always set Access-Control-Allow-Headers "Content-Type, Authorization"
-</Files>
 
 # AHORA sí, permitir archivos y directorios reales (index.html, CSS, JS, imágenes, etc.)
 RewriteCond %{REQUEST_FILENAME} -f [OR]
