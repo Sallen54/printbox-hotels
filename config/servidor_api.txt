@@ -1,0 +1,6 @@
+servidor;http://gestion.printboxweb.com
+evento;
+evento_printer;
+timer;5
+impresora;
+delay;5

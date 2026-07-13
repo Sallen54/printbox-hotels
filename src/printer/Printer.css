@@ -1,0 +1,419 @@
+/* ============================================
+   PrinterApp.css
+   Estilos para el panel de control de impresión (Electron)
+   ============================================ */
+
+.font-mono {
+  font-family: 'DM Mono', monospace;
+}
+
+/* ========== ESTADO DE IMPRESORA ========== */
+.printer-state-dot {
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  transition: background 0.3s, box-shadow 0.3s;
+}
+
+.printer-state-dot.on {
+  background: #22c55e;
+  box-shadow: 0 0 20px rgba(34, 197, 94, 0.5), 0 0 40px rgba(34, 197, 94, 0.2);
+  animation: pulse-green 2s ease-in-out infinite;
+}
+
+.printer-state-dot.off {
+  background: #1a1a26;
+  border: 2px solid var(--pb-bg-alt);
+}
+
+@keyframes pulse-green {
+  0%,
+  100% {
+    box-shadow: 0 0 20px rgba(34, 197, 94, 0.5), 0 0 40px rgba(34, 197, 94, 0.2);
+  }
+  50% {
+    box-shadow: 0 0 30px rgba(34, 197, 94, 0.8), 0 0 60px rgba(34, 197, 94, 0.35);
+  }
+}
+
+/* ========== HEADER ========== */
+.printer-nav {
+  background-color: #000;
+  border-bottom: 2px solid var(--pb-accent);
+  flex-shrink: 0;
+  padding: 0.5rem 1rem;
+}
+
+.printer-logo {
+  width: 38px;
+  height: 38px;
+  border-radius: 0.25rem;
+}
+
+.printer-title {
+  font-family: 'Syne', sans-serif;
+  font-size: 16px;
+  font-weight: bold;
+}
+
+.printer-version {
+  font-size: 9px;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+}
+
+.printer-event-badge {
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.printer-event-edit {
+  font-size: 11px;
+  opacity: 0.7;
+  padding: 0;
+  line-height: 1;
+}
+
+.printer-contact {
+  font-size: 11px;
+  color: var(--bs-secondary);
+  font-family: monospace;
+}
+
+/* ========== ALERTAS ========== */
+/* Alerta impresora offline */
+.printer-offline-alert {
+  border-radius: 0;
+  margin-bottom: 0;
+  padding: 0.5rem 1rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-shrink: 0;
+}
+
+.printer-offline-alert .retry-btn {
+  margin-left: auto;
+  font-family: monospace;
+}
+
+/* Alerta reconexión API */
+.reconnect-alert {
+  border-radius: 0;
+  margin-bottom: 0;
+  padding: 0.5rem 1rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-shrink: 0;
+}
+
+/* ========== MODAL EVENTO ========== */
+.event-modal .modal-content {
+  background-color: var(--bs-dark);
+  border-color: var(--bs-secondary);
+}
+
+.event-modal-body {
+  text-align: center;
+  padding: 1.5rem;
+}
+
+.event-modal-logo {
+  width: 80px;
+  border-radius: 0.5rem;
+  margin-bottom: 0.75rem;
+}
+
+.event-modal-title {
+  font-weight: bold;
+  margin-bottom: 0.25rem;
+}
+
+.event-modal-subtitle {
+  font-size: 12px;
+  font-family: monospace;
+  color: var(--bs-secondary);
+  margin-bottom: 0.75rem;
+}
+
+.event-modal-input-group .input-group-text {
+  background-color: #000;
+  border-color: var(--bs-secondary);
+  color: var(--pb-accent);
+  font-weight: bold;
+  font-family: monospace;
+}
+
+.event-modal-input {
+  background-color: #000;
+  border-color: var(--bs-secondary);
+  color: var(--bs-light);
+  font-family: monospace;
+  font-size: 24px;
+  font-weight: bold;
+  letter-spacing: 3px;
+}
+
+.event-modal-input.is-invalid {
+  border-color: var(--bs-danger);
+}
+
+/* ========== CONFIGURACIÓN ========== */
+.config-card {
+  background-color: #000;
+  border-color: var(--bs-secondary);
+}
+
+.config-header {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 0.75rem;
+}
+
+.config-badge {
+  font-size: 11px;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: var(--bs-secondary);
+  font-family: monospace;
+  font-weight: bold;
+}
+
+.config-api-badge {
+  background-color: var(--bs-secondary);
+  font-family: monospace;
+  font-weight: normal;
+}
+
+.config-label {
+  font-size: 12px;
+  font-weight: bold;
+  color: var(--bs-secondary);
+}
+
+.config-helper-text {
+  font-size: 10px;
+  margin-bottom: 0.25rem;
+  color: var(--bs-secondary);
+}
+
+.config-input {
+  background-color: var(--bs-dark);
+  border-color: var(--bs-secondary);
+  color: var(--bs-light);
+  font-family: monospace;
+}
+
+/* Textos del visor - sección de edición */
+.textos-section-title {
+  color: var(--bs-secondary);
+  font-family: monospace;
+  font-weight: bold;
+  font-size: 11px;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  margin-bottom: 0.75rem;
+}
+
+.textos-input-label {
+  font-size: 12px;
+  font-weight: bold;
+  color: var(--bs-secondary);
+}
+
+.textos-input {
+  background-color: var(--bs-dark);
+  border-color: var(--bs-secondary);
+  color: var(--bs-light);
+  font-family: monospace;
+  font-size: 0.875rem;
+}
+
+/* Botones de configuración */
+.config-edit-buttons {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+}
+
+/* ========== CONTROLES ========== */
+.controls-card {
+  background-color: #000;
+  border-color: var(--bs-secondary);
+}
+
+.controls-container {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 2rem;
+  padding: 0.75rem 0;
+}
+
+.start-btn {
+  font-weight: bold;
+  padding-left: 2rem;
+  padding-right: 2rem;
+}
+
+.stop-btn {
+  font-weight: bold;
+  padding-left: 2rem;
+  padding-right: 2rem;
+}
+
+.printer-state {
+  text-align: center;
+}
+
+.printer-state-text {
+  font-size: 10px;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: var(--bs-secondary);
+}
+
+/* ========== STATS CARDS ========== */
+.stats-card {
+  background-color: #000;
+  border-color: var(--bs-secondary);
+  height: 100%;
+  text-align: center;
+}
+
+.stats-number {
+  color: var(--pb-accent);
+  font-weight: bold;
+  font-size: 36px;
+}
+
+.stats-number-large {
+  font-size: 32px;
+  font-family: monospace;
+  font-weight: bold;
+  color: var(--pb-accent);
+}
+
+.stats-label {
+  font-size: 10px;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: var(--bs-secondary);
+}
+
+/* ========== ÚLTIMA FOTO ========== */
+.last-photo-card {
+  background-color: #000;
+  border-color: var(--bs-secondary);
+  height: 100%;
+}
+
+.last-photo-title {
+  font-size: 10px;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: var(--bs-secondary);
+  margin-bottom: 0.5rem;
+}
+
+.last-photo-img {
+  max-height: 110px;
+  object-fit: contain;
+  border-radius: 0.25rem;
+}
+
+.last-photo-placeholder {
+  font-size: 24px;
+  color: var(--bs-secondary);
+  margin-top: 0.75rem;
+}
+
+/* ========== LOG ========== */
+.log-card {
+  background-color: #000;
+  border-color: var(--bs-secondary);
+}
+
+.log-title {
+  font-size: 11px;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: var(--bs-secondary);
+  margin-bottom: 0.5rem;
+}
+
+.log-container {
+  height: 160px;
+  overflow-y: auto;
+  font-size: 12px;
+  font-family: monospace;
+  background-color: var(--pb-bg);
+  border-radius: 0.25rem;
+  padding: 0.5rem;
+}
+
+.log-empty {
+  color: var(--bs-secondary);
+  font-style: italic;
+}
+
+.log-entry {
+  display: flex;
+  gap: 0.75rem;
+  line-height: 1.6;
+}
+
+.log-time {
+  color: var(--bs-secondary);
+  opacity: 0.5;
+  flex-shrink: 0;
+}
+
+/* Tipos de log */
+.log-info {
+  color: var(--bs-light);
+}
+
+.log-success {
+  color: #198754;
+}
+
+.log-warn {
+  color: #ffc107;
+}
+
+.log-error {
+  color: #dc3545;
+}
+
+/* ========== UTILIDADES ========== */
+.bg-darker {
+  background: var(--pb-bg) !important;
+}
+
+/* ========== RESPONSIVE ========== */
+@media (max-width: 768px) {
+  .controls-container {
+    gap: 1rem;
+  }
+  
+  .start-btn,
+  .stop-btn {
+    padding-left: 1rem;
+    padding-right: 1rem;
+    font-size: 0.875rem;
+  }
+  
+  .stats-number {
+    font-size: 28px;
+  }
+  
+  .stats-number-large {
+    font-size: 24px;
+  }
+}

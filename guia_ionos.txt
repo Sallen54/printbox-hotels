@@ -1,0 +1,60 @@
+GUÍA RÁPIDA: Publicar proyecto en IONOS (Apache compartido)
+
+========================================
+
+1. PREPARAR EL PROYECTO
+------------------------
+- Haz tus cambios en local(o haciendo pull si es lovable :P)
+- npm install   (o npm update si ya tienes node_modules)
+- npm run build
+
+2. ARCHIVOS A SUBIR POR FTP
+---------------------------
+Sube a la raíz del subdominio (o carpeta pública):
+
+  /dist/                    ← todo el contenido de esta carpeta
+  /proxy.php                 ← si tu proyecto usa backend PHP
+  /.htaccess                 ← reglas de Apache (MUY IMPORTANTE)
+  /config/                  ← solo si no existe ya en el servidor
+                               (si existe, NO sobreescribir)
+
+NO subas:
+  - node_modules/
+  - .git/
+  - archivos de desarrollo (.env, etc.)
+
+3. .HTACCESS (errores comunes)
+------------------------------
+Si al subir no funciona, comprueba:
+
+a) ¿El .htaccess tiene RewriteBase correcto?
+   RewriteBase /
+
+b) ¿Las rutas de las reglas existen?
+   RewriteRule ^carpeta/.*$ proxy.php [L,QSA]
+
+c) Permisos de la carpeta config/:
+   chmod 755 config/
+
+d) Si ves error 500, el .htaccess tiene syntax error.
+   Prueba renombrarlo temporalmente para diagnosticar.
+
+4. VERIFICAR
+------------
+- https://tudominio.com/health         → debe responder { "ok": true }
+- https://tudominio.com/config         → debe devolver config
+- Revisa la consola del navegador (F12) por errores CORS
+
+5. PROBLEMAS FRECUENTES
+-----------------------
+- "No encuentra archivos": que .htaccess tiene
+  RewriteCond %{REQUEST_FILENAME} !-f
+  RewriteCond %{REQUEST_FILENAME} !-d
+
+- "Error 301 redirect": El .htaccess hace redirect y pierde POST.
+  Usa siempre / al final en las URLs (ej: /config/ no /config)
+
+- "404 en rutas SPA": La regla catch-all debe estar AL FINAL:
+  RewriteRule ^ index.html [L]
+
+========================================

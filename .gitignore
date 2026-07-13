@@ -1,0 +1,11 @@
+node_modules/
+dist/
+dist-electron/
+descargas/
+pdf/
+*.log
+config/paypal.json
+.claude/settings.local.json
+printbox-api-laravel/
+PrintboxAdventureFlutter/
+PrintBoxFlutter/

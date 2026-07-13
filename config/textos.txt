@@ -1,0 +1,9 @@
+es:¡Consigue tu foto de la habitación!
+en:Get your room photo!
+fr:Obtenez votre photo!
+de:Hol dir dein Foto!
+precio1:5
+precio2:9
+precio3:12
+empresa:Printbox Hotels
+email_recepcion:

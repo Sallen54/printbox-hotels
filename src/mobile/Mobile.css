@@ -1,0 +1,773 @@
+/* ============================================
+   MobileApp.css
+   Estilos para la aplicación móvil (cliente)
+   ============================================ */
+
+.mobile-app {
+  min-height: 100dvh;
+  background: var(--pb-bg);
+  color: #fff;
+  font-family: system-ui, sans-serif;
+  max-width: 480px;
+  margin: 0 auto;
+  overflow-x: hidden;
+  -webkit-user-select: none;
+  -moz-user-select: none;
+  -ms-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+  touch-action: manipulation;
+}
+
+html,
+body {
+  overflow-x: hidden;
+  background: var(--pb-bg);
+  -webkit-user-select: none;
+  -moz-user-select: none;
+  -ms-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+  touch-action: manipulation;
+}
+
+/* ========== PAYMENT INPUTS - Allow interaction ========== */
+#card-container,
+#apple-pay-container,
+#paypal-button-container {
+  -webkit-user-select: text !important;
+  -moz-user-select: text !important;
+  -ms-user-select: text !important;
+  user-select: text !important;
+  touch-action: auto !important;
+}
+
+#card-container input,
+#card-container select,
+#apple-pay-container input,
+#apple-pay-container select,
+#paypal-button-container input,
+#paypal-button-container select {
+  -webkit-user-select: text !important;
+  -moz-user-select: text !important;
+  -ms-user-select: text !important;
+  user-select: text !important;
+}
+
+/* ========== HEADER ========== */
+.mobile-header {
+  background: linear-gradient(135deg, var(--pb-bg) 0%, var(--pb-bg-alt) 100%);
+  border-bottom: 2px solid var(--pb-accent);
+  padding: 12px 16px;
+  position: sticky;
+  top: 0;
+  z-index: 100;
+}
+
+.mobile-header-logo {
+  width: 32px;
+  border-radius: 6px;
+}
+
+.mobile-header-ic-launcher-large {
+  height: 45px;
+  width: auto;
+  aspect-ratio: 1;
+  border-radius: 8px;
+  flex-shrink: 0;
+}
+
+.mobile-header-title {
+  font-size: 14px;
+  font-weight: bold;
+  color: var(--pb-accent);
+  line-height: 1.4;
+}
+
+.mobile-header-subtitle {
+  font-size: 11px;
+  color: #aaa;
+  margin-top: 2px;
+}
+
+.mobile-header-ic-launcher {
+  height: 18px;
+  width: auto;
+  margin: 0 6px;
+  vertical-align: middle;
+  border-radius: 3px;
+}
+
+.mobile-header-edit {
+  font-size: 11px;
+}
+
+/* ========== PANTALLA DE EVENTO ========== */
+.event-container {
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 0 1rem;
+}
+
+.event-logo {
+  width: 80px;
+  border-radius: 0.5rem;
+  margin-bottom: 1rem;
+}
+
+.event-title {
+  font-size: 22px;
+  font-weight: bold;
+  color: var(--pb-accent);
+  margin-bottom: 0.25rem;
+}
+
+.event-subtitle {
+  font-size: 14px;
+  color: var(--bs-secondary);
+  margin-bottom: 1.5rem;
+}
+
+.event-input-wrapper {
+  width: 100%;
+  max-width: 320px;
+}
+
+.event-input-group {
+  margin-bottom: 0.5rem;
+}
+
+.event-input-prefix {
+  background-color: #000;
+  border-color: var(--bs-secondary);
+  color: var(--pb-accent);
+  font-weight: bold;
+  font-family: monospace;
+}
+
+.event-input {
+  background-color: #000;
+  border-color: var(--bs-secondary);
+  color: var(--bs-light);
+  text-align: center;
+  font-weight: bold;
+  font-size: 24px;
+  letter-spacing: 4px;
+  font-family: monospace;
+}
+
+.event-input.is-invalid {
+  border-color: var(--bs-danger);
+}
+
+.event-button {
+  font-size: 16px;
+  font-weight: bold;
+  width: 100%;
+}
+
+/* ========== GALERÍA ========== */
+/* Foto card */
+.mobile-photo-card {
+  position: relative;
+  border-radius: 10px;
+  overflow: hidden;
+  border: 2px solid transparent;
+  transition: border-color 0.15s, transform 0.15s;
+  cursor: pointer;
+  aspect-ratio: 3/4;
+  background: var(--pb-bg-alt);
+}
+
+.mobile-photo-card img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.mobile-photo-card.selected {
+  border-color: var(--pb-accent);
+  transform: scale(0.97);
+}
+
+.mobile-photo-card .selected-badge {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  background: var(--pb-accent);
+  color: #000;
+  border-radius: 50%;
+  width: 26px;
+  height: 26px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  font-size: 13px;
+}
+
+/* Grid galería */
+.gallery-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  padding: 0 1rem;
+  padding-bottom: 120px;
+}
+
+/* Loader */
+.gallery-loader {
+  text-align: center;
+  padding: 2rem 0;
+}
+
+/* Scroll infinito */
+.infinite-loader {
+  text-align: center;
+  padding: 0.75rem 0;
+}
+
+.all-loaded-text {
+  font-size: 12px;
+  color: var(--bs-secondary);
+}
+
+/* Botón cámara en galería */
+.camera-button {
+  margin-bottom: 0.75rem;
+  padding: 0 1rem;
+}
+
+.camera-button .btn {
+  width: 100%;
+  font-weight: 600;
+}
+
+/* ========== BARRA FLOTANTE DE PEDIDO ========== */
+.order-float-button {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 9999;
+  width: 90%;
+  max-width: 420px;
+}
+
+.order-float-button .btn {
+  font-size: 16px;
+  border-radius: 30px;
+  padding: 14px 24px;
+}
+
+/* ========== CÁMARA ========== */
+.camera-preview {
+  width: 100%;
+  aspect-ratio: 3/4;
+  object-fit: cover;
+  border-radius: 12px;
+  background: #000;
+  display: block;
+}
+
+/* Botón cámara circular */
+.shutter-btn {
+  width: 70px;
+  height: 70px;
+  border-radius: 50%;
+  background: #fff;
+  border: 4px solid var(--pb-accent);
+  cursor: pointer;
+  transition: transform 0.1s, background 0.1s;
+}
+
+.shutter-btn:active {
+  transform: scale(0.9);
+  background: var(--pb-accent);
+}
+
+.camera-container {
+  padding: 0 1rem;
+  flex-grow: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.camera-shutter {
+  display: flex;
+  justify-content: center;
+}
+
+/* Miniaturas de fotos capturadas */
+.captured-section {
+  margin-top: 0.5rem;
+}
+
+.captured-title {
+  font-size: 12px;
+  color: var(--bs-secondary);
+  margin-bottom: 0.5rem;
+}
+
+.captured-thumbnails {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.captured-thumb-wrapper {
+  position: relative;
+}
+
+.captured-thumb {
+  width: 60px;
+  height: 80px;
+  object-fit: cover;
+  border-radius: 6px;
+  border: 2px solid var(--pb-accent);
+}
+
+.captured-remove-btn {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  width: 20px;
+  height: 20px;
+  font-size: 10px;
+  border-radius: 50%;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.continue-button {
+  margin-top: 0.5rem;
+}
+
+/* ========== RESUMEN DEL PEDIDO ========== */
+.order-summary-container {
+  padding: 1rem;
+  flex-grow: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+/* Item de foto en resumen */
+.order-photo-item {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  background-color: #000;
+  border-radius: 0.5rem;
+  padding: 0.5rem;
+}
+
+.order-photo-thumb {
+  width: 60px;
+  height: 80px;
+  object-fit: cover;
+  border-radius: 6px;
+  border: 1px solid #333;
+}
+
+.order-photo-info {
+  flex-grow: 1;
+}
+
+.order-photo-label {
+  font-size: 12px;
+  color: var(--bs-secondary);
+}
+
+.order-copies-selector {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.25rem;
+}
+
+.order-copies-label {
+  font-size: 12px;
+  color: var(--bs-secondary);
+}
+
+.order-copies-btn {
+  padding: 0 0.5rem;
+  font-size: 0.875rem;
+  border: 1px solid transparent !important;
+  transition: all 0.15s ease;
+}
+
+.order-copies-btn-active {
+  background-color: var(--pb-accent) !important;
+  color: #000 !important;
+  font-weight: bold !important;
+  border-color: var(--pb-accent) !important;
+}
+
+.order-copies-btn-inactive {
+  background-color: transparent !important;
+  border-color: var(--bs-secondary) !important;
+  color: var(--bs-light) !important;
+}
+
+.order-price {
+  margin-left: auto;
+  color: var(--pb-accent);
+  font-weight: bold;
+}
+
+.order-delete-btn {
+  flex-shrink: 0;
+}
+
+/* Total del pedido */
+.order-total-box {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background-color: #000;
+  border-radius: 0.5rem;
+  padding: 0.75rem;
+  margin-top: 0.5rem;
+}
+
+.order-total-label {
+  font-weight: bold;
+}
+
+.order-total-amount {
+  font-weight: bold;
+  color: var(--pb-accent);
+  font-size: 22px;
+}
+
+/* Nota de pago */
+.order-payment-note {
+  background: var(--pb-bg-alt);
+  padding: 0.5rem 0.75rem;
+  border-radius: 0.375rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 13px;
+  border: none;
+}
+
+/* Footer del pedido */
+.order-footer {
+  padding: 0 1rem 1rem 1rem;
+  border-top: 1px solid #222;
+  padding-top: 0.5rem;
+}
+
+.order-confirm-btn {
+  font-size: 16px;
+  font-weight: bold;
+  width: 100%;
+}
+
+/* ========== PANTALLA DE ÉXITO ========== */
+.success-container {
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 0 1rem;
+  text-align: center;
+}
+
+.success-image {
+  width: 200px;
+  max-width: 80%;
+  height: auto;
+  object-fit: contain;
+}
+
+.success-title {
+  font-weight: bold;
+  margin-top: 0.75rem;
+  color: var(--pb-accent);
+}
+
+.success-text {
+  color: var(--bs-secondary);
+  margin-top: 0.5rem;
+}
+
+.success-small-text {
+  font-size: 13px;
+  color: var(--bs-secondary);
+}
+
+.back-button {
+  margin-top: 1.5rem;
+}
+
+.company-footer {
+  margin-top: 3rem;
+  font-size: 12px;
+  color: var(--bs-secondary);
+}
+
+/* ========== STEP INDICATOR ========== */
+.step-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #333;
+  transition: background 0.2s;
+}
+
+.step-dot.active {
+  background: var(--pb-accent);
+}
+
+.step-dot.done {
+  background: #198754;
+}
+
+.step-number {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: #333;
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: bold;
+  font-size: 12px;
+  transition: background 0.2s, color 0.2s;
+}
+
+.step-number.active {
+  background: var(--pb-accent);
+  color: #000;
+}
+
+.step-number.done {
+  background: #198754;
+  color: #fff;
+}
+
+/* ========== TOAST NOTIFICATIONS ========== */
+.mobile-toast {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--pb-bg-alt);
+  border: 1px solid var(--pb-accent);
+  color: #fff;
+  padding: 10px 20px;
+  border-radius: 20px;
+  font-size: 14px;
+  z-index: 9999;
+  white-space: nowrap;
+  animation: fadeInUp 0.3s ease;
+}
+
+@keyframes fadeInUp {
+  from {
+    opacity: 0;
+    transform: translateX(-50%) translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
+}
+
+/* ========== UTILIDADES ========== */
+.mobile-gallery-grid {
+  padding-bottom: 120px;
+}
+
+/* ========== MÉTODOS DE PAGO ========== */
+.payment-methods-section {
+  margin-top: 20px;
+  padding: 0 16px;
+}
+
+.payment-title {
+  color: var(--pb-accent);
+  font-size: 18px;
+  font-weight: 600;
+  margin-bottom: 16px;
+  text-align: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.payment-method-card {
+  background: linear-gradient(135deg, var(--pb-bg-alt) 0%, #16213e 100%);
+  border: 1px solid #2a2a4e;
+  border-radius: 12px;
+  margin-bottom: 16px;
+  overflow: hidden;
+  transition: all 0.3s ease;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+
+.payment-method-card:hover {
+  border-color: var(--pb-accent);
+  box-shadow: 0 6px 20px rgba(247, 198, 4, 0.2);
+}
+
+.payment-method-header {
+  display: flex;
+  align-items: center;
+  padding: 16px;
+  background: rgba(247, 198, 4, 0.05);
+  border-bottom: 1px solid #2a2a4e;
+}
+
+.payment-method-icon {
+  width: 48px;
+  height: 48px;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 24px;
+  margin-right: 16px;
+  flex-shrink: 0;
+}
+
+.paypal-card .payment-method-icon {
+  background: linear-gradient(135deg, #0070ba 0%, #003087 100%);
+  color: white;
+}
+
+.card-payment-card .payment-method-icon {
+  background: linear-gradient(135deg, var(--pb-accent) 0%, #e6b800 100%);
+  color: #000;
+}
+
+.payment-method-info {
+  flex: 1;
+}
+
+.payment-method-name {
+  font-size: 16px;
+  font-weight: 600;
+  color: #fff;
+  margin-bottom: 4px;
+}
+
+.payment-method-desc {
+  font-size: 14px;
+  color: #b0b0b0;
+}
+
+.payment-method-content {
+  padding: 16px;
+}
+
+.payment-btn {
+  background: linear-gradient(135deg, var(--pb-accent) 0%, #e6b800 100%);
+  border: none;
+  color: #000;
+  font-weight: 700;
+  padding: 12px;
+  border-radius: 8px;
+  transition: all 0.3s ease;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.payment-btn:hover:not(:disabled) {
+  background: linear-gradient(135deg, #e6b800 0%, #d4a600 100%);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(247, 198, 4, 0.3);
+}
+
+.payment-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* ========== MODAL TÉRMINOS Y CONDICIONES ========== */
+.terms-modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.8);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10000;
+  backdrop-filter: blur(4px);
+}
+
+.terms-modal-content {
+  background: var(--pb-bg-alt);
+  border: 1px solid var(--pb-accent);
+  border-radius: 16px;
+  width: 90%;
+  max-width: 380px;
+  max-height: 80vh;
+  overflow-y: auto;
+  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.5);
+  animation: fadeInUp 0.2s ease;
+}
+
+.terms-modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 16px;
+  border-bottom: 1px solid #2a2a4e;
+  color: var(--pb-accent);
+}
+
+.terms-modal-header h5 {
+  margin: 0;
+  font-size: 1.1rem;
+}
+
+.terms-modal-close {
+  background: none;
+  border: none;
+  font-size: 1.8rem;
+  line-height: 1;
+  color: #aaa;
+  cursor: pointer;
+  transition: color 0.2s;
+  padding: 0;
+}
+
+.terms-modal-close:hover {
+  color: var(--pb-accent);
+}
+
+.terms-modal-body {
+  padding: 16px;
+  color: #e0e0e0;
+  font-size: 0.9rem;
+  line-height: 1.4;
+}
+
+.terms-modal-body p {
+  margin-bottom: 12px;
+}
+
+.terms-modal-footer {
+  padding: 12px 16px;
+  border-top: 1px solid #2a2a4e;
+  display: flex;
+  justify-content: flex-end;
+}

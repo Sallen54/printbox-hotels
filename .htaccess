@@ -1,0 +1,61 @@
+Options -MultiViews
+RewriteEngine On
+
+RewriteBase /
+
+# CSP disabled for debugging - allows all resources including data URLs
+Header always set Content-Security-Policy "default-src *; script-src * 'unsafe-inline' 'unsafe-eval'; style-src * 'unsafe-inline'; img-src * data:; font-src * data:; connect-src *; frame-src *; object-src *;"
+
+# ¡IMPORTANTE! Las reglas de API DEBEN ir ANTES de la regla de archivos/directorios reales
+# Porque /config/ es una carpeta real que existe, Apache la ve como directorio
+# y no la reescribe si la regla de archivos/directorios reales viene primero
+
+# Config endpoints - ANTES que "archivos reales"
+RewriteRule ^config/?$ /proxy.php [PT,L,QSA]
+
+# Reset config endpoint
+RewriteRule ^reset-config/?$ /proxy.php [PT,L,QSA]
+
+# Payment endpoint
+RewriteRule ^process-payment/?$ /proxy.php [PT,L,QSA]
+
+# Debug endpoint
+RewriteRule ^debug(/.*)?$ /proxy.php [PT,L,QSA]
+
+# Apple Pay domain verification - allow direct access to file
+RewriteCond %{REQUEST_URI} ^/\.well-known/apple-developer-merchantid-domain-association$
+RewriteRule ^ - [L]
+
+# APIs y proxy
+RewriteRule ^health$ /proxy.php [PT,L,QSA]
+RewriteRule ^print/.*$ /proxy.php [PT,L,QSA]
+RewriteRule ^printbox/.*$ /proxy.php [PT,L,QSA]
+RewriteRule ^proxy-image/.*$ /proxy.php [PT,L,QSA]
+RewriteRule ^paypal/.*$ /proxy.php [PT,L,QSA]
+
+# Coupon endpoints (generación, validación, canje y listado)
+RewriteRule ^coupon/create$ /proxy.php [PT,L,QSA]
+RewriteRule ^coupon/validate$ /proxy.php [PT,L,QSA]
+RewriteRule ^coupon/redeem$ /proxy.php [PT,L,QSA]
+RewriteRule ^coupon/list$ /proxy.php [PT,L,QSA]
+
+# Apple Pay domain verification - headers
+<Files "apple-developer-merchantid-domain-association">
+    Header always set Content-Type "text/plain"
+    Header always set Cache-Control "no-cache, no-store, must-revalidate, max-age=0"
+    Header always set Pragma "no-cache"
+    Header always set Expires "Thu, 01 Jan 1970 00:00:00 GMT"
+    Header always set Access-Control-Allow-Origin "*"
+    Header always set Access-Control-Allow-Methods "GET, HEAD, OPTIONS"
+    Header always set Access-Control-Allow-Headers "Content-Type, Authorization"
+</Files>
+
+# AHORA sí, permitir archivos y directorios reales (index.html, CSS, JS, imágenes, etc.)
+RewriteCond %{REQUEST_FILENAME} -f [OR]
+RewriteCond %{REQUEST_FILENAME} -d
+RewriteRule ^ - [L]
+
+# React Router: todo lo demás a index.html
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteCond %{REQUEST_FILENAME} !-d
+RewriteRule ^ index.html [L]

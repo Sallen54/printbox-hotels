@@ -1,0 +1,5 @@
+{
+  "clientId": "YOUR_PAYPAL_CLIENT_ID",
+  "clientSecret": "YOUR_PAYPAL_CLIENT_SECRET",
+  "env": "sandbox"
+}

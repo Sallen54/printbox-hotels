@@ -1,0 +1,50 @@
+/* Paleta Printbox Hotels — variables propias centralizadas.
+   Cambiar solo estos valores re-tematiza toda la app (mobile/viewer/printer). */
+:root {
+  --pb-bg: #14110d;
+  --pb-bg-alt: #201a12;
+  --pb-accent: #c9a24b;
+  --pb-accent-dark: #a6842f;
+  --pb-text: #f2ead9;
+  --pb-text-muted: #b8ab8f;
+
+  --bs-font-sans-serif: 'Syne', sans-serif;
+  --bs-body-bg: var(--pb-bg);
+  --bs-body-color: var(--pb-text);
+}
+
+body {
+  font-family: 'Syne', sans-serif;
+}
+
+.font-mono {
+  font-family: 'DM Mono', monospace !important;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--pb-bg);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--pb-bg-alt);
+  border-radius: 3px;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  overflow: hidden;
+}
+
+/* La app móvil necesita scroll natural */
+body:has(.mobile-app),
+body:has(.mobile-app) #root {
+  overflow: auto !important;
+  height: auto !important;
+}
