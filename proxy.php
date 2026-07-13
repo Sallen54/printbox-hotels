@@ -86,6 +86,9 @@ function getTextosFile($configDir, $eventCode = '') {
 // sin pasar por el resto del parseo de /config, para mantener este endpoint independiente.
 function getRoomReceptionEmail($configDir, $room) {
     $textosFile = getTextosFile($configDir, $room);
+    // Limpiar caché de stat: sin esto, un archivo textos_<habitación>.txt recién escrito
+    // por /config (p. ej. segundos antes desde el panel Admin) puede parecer inexistente.
+    clearstatcache(true, $textosFile);
     if (!file_exists($textosFile)) return '';
     $lines = file($textosFile, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
     foreach ($lines as $line) {
@@ -169,7 +172,7 @@ HTML;
         . $imageParts
         . "--{$boundary}--";
 
-    return @mail($to, $subject, $body, $headers);
+    return mail($to, $subject, $body, $headers);
 }
 
 function getPaypalConfigFile($configDir) {
@@ -322,6 +325,7 @@ if ($uri === '/config' && $_SERVER['REQUEST_METHOD'] === 'GET') {
     $config = [
         'servidor'  => 'http://gestion.printboxweb.com',
         'evento'    => '', 'timer' => 5, 'impresora' => '', 'delay' => 5,
+        'servicio_disponible' => true,
     ];
     $textos = [
         'text_es' => '', 'text_en' => '', 'text_fr' => '', 'text_de' => '',
@@ -331,11 +335,16 @@ if ($uri === '/config' && $_SERVER['REQUEST_METHOD'] === 'GET') {
     $apiFile = $configDir . '/servidor_api.txt';
     if (file_exists($apiFile)) {
         $lines = file($apiFile, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
-        $keys  = ['servidor', 'evento', 'evento_printer', 'timer', 'impresora', 'delay'];
+        $keys  = ['servidor', 'evento', 'evento_printer', 'timer', 'impresora', 'delay', 'servicio_disponible'];
         foreach ($lines as $i => $line) {
             $val = trim(strpos($line, ';') !== false ? explode(';', $line, 2)[1] : $line);
-            if (isset($keys[$i]))
-                $config[$keys[$i]] = in_array($keys[$i], ['timer','delay']) ? ((int)$val ?: 5) : $val;
+            if (isset($keys[$i])) {
+                if ($keys[$i] === 'servicio_disponible') {
+                    $config[$keys[$i]] = ($val !== '0');
+                } else {
+                    $config[$keys[$i]] = in_array($keys[$i], ['timer','delay']) ? ((int)$val ?: 5) : $val;
+                }
+            }
         }
     }
 
@@ -401,6 +410,7 @@ if ($uri === '/config' && $_SERVER['REQUEST_METHOD'] === 'POST') {
             'timer;'    . ($c['timer']     ?? 5),
             'impresora;'. ($c['impresora'] ?? ''),
             'delay;'    . ($c['delay']     ?? 5),
+            'servicio_disponible;' . ((($c['servicio_disponible'] ?? true) === false) ? '0' : '1'),
         ]));
         if ($success === false) $writeErrors[] = 'No se pudo escribir servidor_api.txt';
     }
@@ -660,12 +670,35 @@ if (strpos($uri, '/printbox/') === 0) {
         $emailTo = getRoomReceptionEmail($configDir, $room);
 
         if (!$emailTo) {
-            echo json_encode(['ok' => true, 'skipped' => true, 'reason' => 'Sin email de recepción configurado para esta habitación']);
+            $debugFile = getTextosFile($configDir, $room);
+            echo json_encode([
+                'ok' => true,
+                'skipped' => true,
+                'reason' => 'Sin email de recepción configurado para esta habitación',
+                'debug' => [
+                    'room' => $room,
+                    'configDir' => $configDir,
+                    'textosFile' => $debugFile,
+                    'fileExists' => file_exists($debugFile),
+                    'fileContent' => file_exists($debugFile) ? file_get_contents($debugFile) : null,
+                    'proxyMtime' => date('Y-m-d H:i:s', filemtime(__FILE__)),
+                ],
+            ]);
             exit();
         }
 
+        error_clear_last();
         $sent = sendRoomOrderEmail($emailTo, $room, $items, $total, $paymentMethod);
-        echo json_encode(['ok' => (bool) $sent]);
+        $lastError = error_get_last();
+        echo json_encode([
+            'ok' => (bool) $sent,
+            'debug' => [
+                'emailTo' => $emailTo,
+                'sendmail_from' => ini_get('sendmail_from'),
+                'sendmail_path' => ini_get('sendmail_path'),
+                'lastError' => $lastError,
+            ],
+        ]);
         exit();
     }
 }

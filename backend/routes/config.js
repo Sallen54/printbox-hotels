@@ -16,7 +16,7 @@ router.get('/', (req, res) => {
     const apiFile = path.join(CONFIG_DIR, 'servidor_api.txt')
     const textosFile = path.join(CONFIG_DIR, 'textos.txt')
 
-    const config = { servidor: 'http://gestion.printboxweb.com', evento: '', evento_printer: '', timer: 5, impresora: '', delay: 5 }
+    const config = { servidor: 'http://gestion.printboxweb.com', evento: '', evento_printer: '', timer: 5, impresora: '', delay: 5, servicio_disponible: true }
     const textos = { text_es: '', text_en: '', text_fr: '', text_de: '', precio1: '', precio2: '', precio3: '', empresa: '', email_recepcion: '' }
 
     if (fs.existsSync(apiFile)) {
@@ -29,6 +29,7 @@ router.get('/', (req, res) => {
         if (i === 3 && val) config.timer = parseInt(val) || 5
         if (i === 4 && val) config.impresora = val
         if (i === 5 && val) config.delay = parseInt(val) || 5
+        if (i === 6 && val) config.servicio_disponible = val !== '0'
       })
     }
 
@@ -74,6 +75,7 @@ router.post('/', (req, res) => {
         `timer;${config.timer || 5}`,
         `impresora;${config.impresora || ''}`,
         `delay;${config.delay || 5}`,
+        `servicio_disponible;${config.servicio_disponible === false ? '0' : '1'}`,
       ]
       fs.writeFileSync(path.join(CONFIG_DIR, 'servidor_api.txt'), lines.join('\n'))
     }

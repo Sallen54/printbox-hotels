@@ -131,6 +131,24 @@ body {
   margin-bottom: 1.5rem;
 }
 
+.service-unavailable-box {
+  width: 100%;
+  max-width: 380px;
+  text-align: center;
+}
+
+.service-unavailable-box p {
+  font-size: 15px;
+  color: var(--bs-light);
+  margin-bottom: 1.1rem;
+  line-height: 1.4;
+}
+
+.service-unavailable-flag {
+  font-size: 1.2rem;
+  margin-right: 8px;
+}
+
 .event-input-wrapper {
   width: 100%;
   max-width: 320px;
@@ -194,20 +212,23 @@ body {
   transform: scale(0.97);
 }
 
-.mobile-photo-card .selected-badge {
-  position: absolute;
-  top: 6px;
-  right: 6px;
-  background: var(--pb-accent);
-  color: #000;
-  border-radius: 50%;
-  width: 26px;
-  height: 26px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-weight: 700;
-  font-size: 13px;
+.gallery-empty-state {
+  text-align: center;
+  padding: 3rem 1.5rem;
+  color: var(--bs-secondary);
+}
+
+.gallery-empty-state i {
+  font-size: 48px;
+  color: var(--pb-accent);
+  display: block;
+  margin-bottom: 1rem;
+}
+
+.gallery-empty-state p {
+  font-size: 15px;
+  max-width: 280px;
+  margin: 0 auto;
 }
 
 /* Grid galería */
@@ -217,23 +238,6 @@ body {
   gap: 8px;
   padding: 0 1rem;
   padding-bottom: 120px;
-}
-
-/* Loader */
-.gallery-loader {
-  text-align: center;
-  padding: 2rem 0;
-}
-
-/* Scroll infinito */
-.infinite-loader {
-  text-align: center;
-  padding: 0.75rem 0;
-}
-
-.all-loaded-text {
-  font-size: 12px;
-  color: var(--bs-secondary);
 }
 
 /* Botón cámara en galería */

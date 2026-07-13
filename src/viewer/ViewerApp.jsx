@@ -58,6 +58,7 @@ export default function ViewerApp() {
   const [adminPrice2, setAdminPrice2] = useState('')
   const [adminPrice3, setAdminPrice3] = useState('')
   const [adminEmailRecepcion, setAdminEmailRecepcion] = useState('')
+  const [adminServicioDisponible, setAdminServicioDisponible] = useState(true)
 
   const [showPrivacyModal, setShowPrivacyModal] = useState(false)
   const [privacyContent, setPrivacyContent] = useState('')
@@ -179,10 +180,11 @@ export default function ViewerApp() {
     setAdminPrice2(textos?.precio2 || '9')
     setAdminPrice3(textos?.precio3 || '12')
     setAdminEmailRecepcion(textos?.email_recepcion || '')
+    setAdminServicioDisponible(config?.servicio_disponible !== false)
   }
 
   async function handleSaveAdminConfig() {
-    const newConfig = { ...config, evento: `ev-${adminEventCode}`, evento_printer: `ev-${adminPrinterEventCode}` }
+    const newConfig = { ...config, evento: `ev-${adminEventCode}`, evento_printer: `ev-${adminPrinterEventCode}`, servicio_disponible: adminServicioDisponible }
     const newTextos = {
       text_es: textos?.text_es || '¡Consigue tu foto del evento!',
       text_en: textos?.text_en || 'Get your event photo!',
@@ -463,6 +465,15 @@ export default function ViewerApp() {
                   <div className="col-md-4"><label className="form-label text-light">Precio 2 Fotos (€)</label><input type="number" step="0.01" className="form-control bg-black border-secondary text-light" value={adminPrice2} onChange={e => setAdminPrice2(e.target.value)} /></div>
                   <div className="col-md-4"><label className="form-label text-light">Precio 3+ Fotos (€)</label><input type="number" step="0.01" className="form-control bg-black border-secondary text-light" value={adminPrice3} onChange={e => setAdminPrice3(e.target.value)} /></div>
                   <div className="col-md-12"><label className="form-label text-light">Email de Recepción</label><input type="email" placeholder="recepcion@tuhotel.com" className="form-control bg-black border-secondary text-light" value={adminEmailRecepcion} onChange={e => setAdminEmailRecepcion(e.target.value)} /><div className="form-text text-secondary">A esta dirección se enviará un aviso con miniaturas y copias cada vez que esta habitación envíe fotos.</div></div>
+                  <div className="col-md-12">
+                    <div className="bg-black border border-secondary rounded-3 p-3">
+                      <div className="form-check form-switch">
+                        <input className="form-check-input" type="checkbox" role="switch" id="servicioDisponibleSwitch" checked={adminServicioDisponible} onChange={e => setAdminServicioDisponible(e.target.checked)} />
+                        <label className="form-check-label text-light fw-bold" htmlFor="servicioDisponibleSwitch">Servicio disponible para los huéspedes</label>
+                      </div>
+                      <div className="form-text text-secondary">Afecta a <strong>todo el hotel</strong>, no solo a esta habitación. Si se desactiva, cualquier huésped que escanee un QR verá el aviso de "servicio no disponible" en 4 idiomas en lugar de poder pedir fotos.</div>
+                    </div>
+                  </div>
                 </div>
               </div>
               <div className="modal-footer border-secondary">
@@ -626,6 +637,9 @@ export default function ViewerApp() {
         {uuid && (
           <div className="viewer-header-inner">
             <div className="viewer-header-actions">
+              {config?.servicio_disponible === false && (
+                <span className="badge service-disabled-badge"><i className="bi bi-exclamation-triangle-fill me-1" />Servicio desactivado para los huéspedes</span>
+              )}
               <button className={`btn btn-sm header-action-btn ${autoplay ? 'header-action-btn-active' : ''}`} onClick={() => setAutoplay(!autoplay)} title={autoplay ? 'Detener autoplay' : 'Iniciar autoplay (15s por página)'}><i className={`bi ${autoplay ? 'bi-pause-circle-fill' : 'bi-play-circle-fill'} me-1`} />{autoplay ? 'Autoplay ON' : 'Autoplay'}</button>
               <button className="btn btn-sm header-action-btn" onClick={() => setShowQR(!showQR)} title="Mostrar QR"><i className="bi bi-qr-code me-1" />{showQR ? 'Ocultar QR' : 'Ver QR'}</button>
               <button className="btn btn-sm header-action-btn" onClick={() => setShowPrivacyModal(true)}><i className="bi bi-info-circle me-1" /> Términos</button>

@@ -4,7 +4,7 @@
 
 ## Resumen
 
-Proyecto creado hoy a partir de `printbox-adventures` (carpeta hermana), como base para un producto separado orientado a hoteles/hostales/campings. Es un proyecto nuevo, **aún no desplegado en ningún dominio real** — todo lo verificado hasta ahora es local.
+Proyecto creado hoy a partir de `printbox-adventures` (carpeta hermana), como base para un producto separado orientado a hoteles/hostales/campings. Es un proyecto nuevo; el dominio de producción en IONOS ya está asignado (**https://vf.incomar.net/**), pero **aún no se ha desplegado** — todo lo verificado hasta ahora es local.
 
 ## Cambios frente a printbox-adventures
 
@@ -15,6 +15,8 @@ Proyecto creado hoy a partir de `printbox-adventures` (carpeta hermana), como ba
 - **Nueva feature — aviso a recepción por e-mail**: al enviar fotos (pago o gratis desde cámara) se llama a `POST /printbox/notify-order` una vez por pedido completo. En dev solo loguea por consola; en `proxy.php` (prod) construye y envía un e-mail HTML con miniaturas inline vía `mail()` nativo de PHP, sin SMTP/PHPMailer.
 - **Config nueva**: campo `email_recepcion` añadido en `backend/routes/config.js`, `proxy.php` (GET/POST + validKeys) y en el panel Admin de `ViewerApp.jsx`, con el mismo mecanismo por-habitación que los precios.
 - **Limpieza**: eliminados ~30 assets de Adventures sin usar (mascotas, banners, iconos de flujo OTP/cámara antiguo), la carpeta `assets/` duplicada en la raíz, `test.html`/`test.php` (scratch de diagnóstico IONOS), y todo lo relacionado con la verificación de dominio de Apple Pay (`.well-known/`, rutas en `proxy.php`/`.htaccess`/`copy-dist-assets.js`) — no implementado y específico del dominio de Adventures.
+- **Subir fotos ya guardadas en el móvil**: nuevo botón (icono `bi-images`) en la cabecera de la galería que abre el selector nativo de archivos del móvil (`<input type="file" accept="image/*" multiple>`). Las fotos elegidas entran en el mismo flujo que las de cámara (`capturedPhotos` → pedido → pago/gratis → aviso a recepción) — antes solo se podía elegir de la galería *del evento* o hacer una foto nueva, no subir una que el huésped ya tuviera guardada.
+- **Interruptor "servicio disponible" a nivel de hotel**: nuevo campo `servicio_disponible` (booleano) en `servidor_api.txt`/`config` — es **global**, no depende de la habitación (a diferencia de precios/email que son por-habitación vía `textos_<habitación>.txt`). Se activa/desactiva desde un switch en el panel Admin del Monitor (`ViewerApp.jsx`). Si está desactivado, **cualquier** habitación que abra la app móvil (por QR o manualmente) ve de inmediato una pantalla de bloqueo con el aviso en ES/EN/FR/DE ("Servicio no disponible temporalmente. Lamentamos las molestias.") en vez del flujo normal; se comprueba al entrar y se refresca cada 5s mientras se usa la app, así que también bloquea a media sesión si recepción lo desactiva. El Monitor muestra además una insignia roja de aviso en la cabecera mientras esté desactivado, para que recepción no se olvide de reactivarlo.
 
 ## Dos bugs reales encontrados y corregidos durante la verificación (heredados de Adventures, no introducidos en este trabajo)
 
@@ -27,10 +29,14 @@ Proyecto creado hoy a partir de `printbox-adventures` (carpeta hermana), como ba
 - `npm install` + `npm run build` + `npm run dev` ✅ (sin Electron, puerto correcto, sin colisionar con el directorio de datos de Adventures)
 - **Flujo completo con pago**: `/mobile?habitacion=1204` → seleccionar foto de galería → pedido con 2 copias → pago (SDK de Square mockeado) → `photo-send` recibe la foto → `notify-order` recibe `{room: "1204", items: [...], total, paymentMethod: "Tarjeta (Square)"}` correctamente ✅
 - **Flujo completo gratis con cámara**: botón "Hacer foto" → capturar (cámara simulada con un canvas) → "Subir fotos directamente" → `photo-send` + `notify-order` con `paymentMethod: "Gratis (foto de cámara)"` ✅
+- **Flujo completo subiendo desde la galería del móvil**: botón de galería → elegir un archivo de imagen → "Ver pedido" → pagar (Square mockeado) → `photo-send` + `notify-order` con `room`, `total` y `paymentMethod` correctos ✅
 - `/mobile`, `/viewer` y `/printer` renderizan sin errores de consola, con la marca y colores correctos (Mobile/Printer oscuro-dorado, Viewer claro-crema con el logo del hotel en 3 sitios)
+- **Interruptor de servicio disponible/no disponible**: con `servicio_disponible: true` la app móvil entra con normalidad; con `false` bloquea inmediatamente y muestra el aviso en los 4 idiomas (`.service-unavailable-box`), verificado con red mockeada en ambos casos ✅
+- **Corregido: foto única "enorme" en la galería del Monitor** — con `grid-template-columns: repeat(auto-fit, minmax(180px, 1fr))`, al haber pocas fotos las columnas vacías colapsaban y la(s) foto(s) restante(s) se estiraban para llenar todo el ancho de pantalla. Cambiado a `repeat(auto-fill, minmax(180px, 220px))` + `justify-content: center`, así el tamaño de cada miniatura es fijo (~220px) sin importar cuántas fotos haya. Verificado con una sola foto en un viewport de 1600px: la miniatura midió 220×293px en vez de ocupar toda la pantalla ✅
+- **Corregido: la insignia del logo tapaba la foto entera** — la regla `.viewer-photo-card img` (clase+etiqueta) tenía más especificidad CSS que `.viewer-photo-badge` (una sola clase), así que la insignia circular de 34×34px heredaba el `width:100%;height:100%;object-fit:contain` pensado para la foto principal, mostrándose a tamaño completo (216×289px) y tapando por completo la foto real subida por el huésped — daba la sensación de que "sale el logo en vez de la foto". Corregido reforzando el selector a `.viewer-photo-card .viewer-photo-badge` (dos clases, más específico). Verificado con `getComputedStyle`: antes `width:216px` (mal, igual que la foto), después `width:34px` (correcto, solo la esquina) ✅
 
 ## Pendiente de verificar
 
 - Guardar/leer `email_recepcion` desde el panel Admin del Monitor contra un evento real (ya probado por API directamente, falta probar desde la UI del Admin)
 - Flujo completo de pago (Square/PayPal) contra un evento real de `gestion.printboxweb.com` (lo verificado usó un SDK de Square simulado)
-- Primer despliegue real en IONOS y comprobación de que `mail()` entrega el e-mail (no se puede probar en local)
+- Primer despliegue real en IONOS (`vf.incomar.net`) y comprobación de que `mail()` entrega el e-mail (no se puede probar en local)

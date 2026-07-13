@@ -29,7 +29,7 @@ Sistema de envío e impresión de fotos por habitación para hoteles, hostales y
 Cada habitación tiene un **QR** (pegado en la propia habitación) que abre la app móvil directamente sobre la galería de fotos de esa habitación. El huésped:
 
 1. Escanea el QR → entra directo a la galería de su habitación (sin escribir ningún código).
-2. Elige fotos ya subidas o hace fotos nuevas con la cámara del móvil.
+2. Sube fotos que ya tiene guardadas en el móvil, hace fotos nuevas con la cámara, o elige entre las que ya haya en la habitación.
 3. Paga (tarjeta vía Square o PayPal) o las sube gratis desde la cámara.
 4. **Recepción recibe un e-mail automático** con miniaturas de las fotos, número de copias y el resumen de lo pagado.
 5. Recepción imprime las fotos (con el mismo "Panel de Control"/Printer que ya usa Adventures) y se las entrega al huésped.
@@ -57,7 +57,7 @@ Reutiliza la **misma infraestructura Laravel** que Adventures (`gestion.printbox
 
 ### Para despliegue (IONOS)
 - Acceso FTP al hosting IONOS
-- Dominio o subdominio propio para Printbox Hotels (distinto del de Adventures) — **pendiente de decidir/contratar**
+- Dominio propio para Printbox Hotels: **https://vf.incomar.net/**
 - El mismo backend Laravel externo en `gestion.printboxweb.com`
 
 ---
@@ -76,7 +76,7 @@ Lanza 2 procesos (sin Electron):
 Verificar backend:
 ```
 Desarrollo:  http://localhost:4000/health  →  { "ok": true }
-Producción:  https://<tu-dominio>/health   →  { "ok": true }
+Producción:  https://vf.incomar.net/health   →  { "ok": true }
 ```
 
 ### Probar la app móvil desde el móvil en desarrollo (misma WiFi)
@@ -116,9 +116,9 @@ Ver también `guia_ionos.txt` para la guía genérica paso a paso de FTP.
 
 ### Diagnóstico tras subir
 ```
-https://<tu-dominio>/health     →  { "ok": true }
-https://<tu-dominio>/config     →  { "config": {...}, "textos": {...} }
-https://<tu-dominio>/proxy.php  →  { "status": "ok", "curl": true, ... }
+https://vf.incomar.net/health     →  { "ok": true }
+https://vf.incomar.net/config     →  { "config": {...}, "textos": {...} }
+https://vf.incomar.net/proxy.php  →  { "status": "ok", "curl": true, ... }
 ```
 
 ---
@@ -162,7 +162,7 @@ printbox-hotels/
 ### 6.1 App Móvil (huésped) — `/mobile?habitacion=XXXX`
 
 1. El huésped escanea el QR de su habitación (o recibe la URL) → entra directo a la galería, sin escribir ningún código.
-2. Ve las fotos ya subidas de su habitación y puede seleccionarlas, o pulsar el icono de cámara de la cabecera para hacer fotos nuevas.
+2. En la cabecera tiene tres opciones: el icono de **galería** (📷🖼️, abre el selector nativo del móvil para subir fotos que ya tiene guardadas), el icono de **cámara** (hacer una foto nueva en el momento), o seleccionar alguna de las fotos que ya hubiera en la habitación.
 3. "Ver pedido" → elige copias por foto (1/2/3) y ve el precio.
 4. Paga con tarjeta (Square) o PayPal — o si son solo fotos de cámara, puede subirlas gratis con "Subir fotos directamente".
 5. Al completar el envío, **recepción recibe automáticamente el e-mail** con miniaturas + copias + resumen del pago (ver sección 7).
@@ -305,8 +305,7 @@ Verificar el número de habitación (solo dígitos, sin `ev-`). Comprobar que ex
 
 ## 13. Pendientes / ideas de mejora
 
-- [ ] Contratar/decidir el dominio o subdominio de producción para Printbox Hotels.
-- [ ] Primer despliegue real en IONOS y verificación de que `mail()` entrega correctamente (spam/SPF/DKIM).
+- [ ] Primer despliegue real en IONOS (dominio ya asignado: `vf.incomar.net`) y verificación de que `mail()` entrega correctamente (spam/SPF/DKIM).
 - [ ] Sustituir `hotel-logo.png` por el logo/monograma real del hotel (se reutiliza en cabecera móvil, cabecera del Monitor y badge de las fotos).
 - [ ] Si la entrega de e-mail por `mail()` resulta poco fiable en la práctica, valorar migrar a SMTP real.
 - [ ] PWA manifest para instalar la app móvil en pantalla de inicio.

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react'
-import { findEvent, getEventPhotos, sendPhoto, getConfig, processPayment, getPayPalConfig, createPayPalOrder, capturePayPalOrder, notifyRoomOrder } from '../shared/api'
+import { findEvent, sendPhoto, getConfig, processPayment, getPayPalConfig, createPayPalOrder, capturePayPalOrder, notifyRoomOrder } from '../shared/api'
 import { useInterval } from '../shared/hooks/useInterval'
 import './Mobile.css'
 
@@ -53,20 +53,12 @@ export default function MobileApp() {
   const [loading, setLoading] = useState(false)
   const [loadingFromQR, setLoadingFromQR] = useState(false)
   const [showTermsModal, setShowTermsModal] = useState(false)
+  const [serviceUnavailable, setServiceUnavailable] = useState(false)
 
-  // --- Estados de galería ---
-  const [photos, setPhotos] = useState([])
-  const [page, setPage] = useState(1)
-  const [lastPage, setLastPage] = useState(1)
-  const [loadingPhotos, setLoadingPhotos] = useState(false)
-  const [loadingMore, setLoadingMore] = useState(false)
-  const loaderRef = useRef(null)
+  // --- Estados de habitación/impresora ---
   const uuidRef = useRef(null)
   const [printerUuid, setPrinterUuid] = useState(null)
   const lastPrinterCodeRef = useRef(null)
-
-  // --- Estados de selección ---
-  const [selected, setSelected] = useState([])
 
   // --- Estados de cámara ---
   const videoRef = useRef(null)
@@ -75,6 +67,9 @@ export default function MobileApp() {
   const [cameraOn, setCameraOn] = useState(false)
   const [facingMode, setFacingMode] = useState('environment')
   const [capturedPhotos, setCapturedPhotos] = useState([])
+
+  // --- Subida de fotos ya guardadas en el móvil (galería del dispositivo) ---
+  const galleryFileInputRef = useRef(null)
 
   // --- Estados de envío y pago ---
   const [sending, setSending] = useState(false)
@@ -100,18 +95,6 @@ export default function MobileApp() {
   // ============================================
   const normalizeEventCode = (code = '') => String(code).trim().replace(/^ev[-_]?/i, '')
 
-  const getImageUrl = (url) => {
-    if (!url) return ''
-    if (url.includes('/proxy-image')) return url
-    try {
-      const parsed = new URL(url)
-      return '/proxy-image' + parsed.pathname
-    } catch {
-      if (url.startsWith('/')) return '/proxy-image' + url
-      return url
-    }
-  }
-
   const showToast = (msg, duration = 3000) => {
     setToast(msg)
     setTimeout(() => setToast(null), duration)
@@ -135,7 +118,7 @@ export default function MobileApp() {
   // LOCALSTORAGE
   // ============================================
   const saveToLocalStorage = () => {
-    const data = { eventCode, step, selected, capturedPhotos, uuid, page, lastPage, photos, textos }
+    const data = { eventCode, step, capturedPhotos, uuid, textos }
     localStorage.setItem('printbox_mobile_state', JSON.stringify(data))
   }
 
@@ -146,12 +129,8 @@ export default function MobileApp() {
         const parsed = JSON.parse(data)
         setEventCode(parsed.eventCode || '')
         setStep(parsed.step || STEP_EVENT)
-        setSelected(parsed.selected || [])
         setCapturedPhotos(parsed.capturedPhotos || [])
         setUuid(parsed.uuid || null)
-        setPage(parsed.page || 1)
-        setLastPage(parsed.lastPage || 1)
-        setPhotos(parsed.photos || [])
         if (parsed.textos) setTextos(parsed.textos)
         return parsed
       } catch (e) { console.error(e) }
@@ -185,7 +164,7 @@ export default function MobileApp() {
     } else {
       const saved = loadFromLocalStorage()
       if (saved?.eventCode && saved.step !== STEP_EVENT) {
-        if (saved.photos?.length) {
+        if (saved.uuid) {
           setStep(saved.step)
           setUuid(saved.uuid)
           setLoadingFromQR(false)
@@ -199,15 +178,24 @@ export default function MobileApp() {
     }
   }, [])
 
+  // Comprobación del servicio a nivel de hotel (independiente de la habitación),
+  // tanto al entrar como periódicamente por si recepción lo activa/desactiva mientras se usa.
+  useEffect(() => {
+    getConfig().then(d => {
+      setServiceUnavailable(d.config?.servicio_disponible === false)
+    }).catch(() => {})
+  }, [])
+
   useEffect(() => {
     saveToLocalStorage()
-  }, [eventCode, step, selected, capturedPhotos, uuid, page, lastPage, photos])
+  }, [eventCode, step, capturedPhotos, uuid])
 
   // Refrescar precios y evento impresora cada 5s
   useEffect(() => {
     const interval = setInterval(() => {
       getConfig(eventCode || undefined).then(d => {
         if (d.textos) applyTextos(d.textos)
+        setServiceUnavailable(d.config?.servicio_disponible === false)
         if (d.config?.evento_printer) {
           const printerCode = d.config.evento_printer.replace(/^ev[-_]?/i, '')
           if (printerCode && printerCode !== lastPrinterCodeRef.current) {
@@ -376,7 +364,6 @@ export default function MobileApp() {
           lastPrinterCodeRef.current = printerCode
         }
       }
-      await loadPhotos(id, 1)
       setStep(STEP_GALLERY)
       setLoadingFromQR(false)
     } catch (e) {
@@ -385,54 +372,6 @@ export default function MobileApp() {
     } finally {
       setLoading(false)
     }
-  }
-
-  async function loadPhotos(id, p) {
-    setLoadingPhotos(true)
-    try {
-      const { photos: data, lastPage: lp } = await getEventPhotos(id || uuid, p)
-      setPhotos(data)
-      setLastPage(lp)
-      setPage(p)
-    } catch (err) {
-      showToast('Error cargando fotos')
-      throw err
-    } finally {
-      setLoadingPhotos(false)
-    }
-  }
-
-  async function loadMorePhotos() {
-    if (loadingMore || page >= lastPage) return
-    setLoadingMore(true)
-    try {
-      const nextPage = page + 1
-      const { photos: data } = await getEventPhotos(uuid, nextPage)
-      setPhotos(prev => [...prev, ...data])
-      setPage(nextPage)
-    } catch { showToast('Error cargando más fotos') }
-    finally { setLoadingMore(false) }
-  }
-
-  useEffect(() => {
-    if (!loaderRef.current || step !== STEP_GALLERY) return
-    const observer = new IntersectionObserver(entries => {
-      if (entries[0].isIntersecting && !loadingMore && page < lastPage) loadMorePhotos()
-    }, { threshold: 0.1 })
-    observer.observe(loaderRef.current)
-    return () => observer.disconnect()
-  }, [page, lastPage, loadingMore, step])
-
-  function toggleSelect(photo) {
-    setSelected(prev => {
-      const exists = prev.find(p => p.uri === photo.uri)
-      if (exists) return prev.filter(p => p.uri !== photo.uri)
-      return [...prev, { ...photo, copies: 1 }]
-    })
-  }
-  function isSelected(photo) { return selected.some(p => p.uri === photo.uri) }
-  function updateCopies(uri, copies) {
-    setSelected(prev => prev.map(p => p.uri === uri ? { ...p, copies } : p))
   }
 
   // ============================================
@@ -479,9 +418,27 @@ export default function MobileApp() {
   }
 
   // ============================================
+  // SUBIR FOTOS YA GUARDADAS EN EL MÓVIL (galería del dispositivo)
+  // ============================================
+  async function handleGalleryFilesSelected(e) {
+    const files = Array.from(e.target.files || [])
+    e.target.value = '' // permite volver a elegir el mismo archivo más tarde
+    for (const file of files) {
+      const raw = await new Promise(res => {
+        const reader = new FileReader()
+        reader.onload = () => res(reader.result)
+        reader.readAsDataURL(file)
+      })
+      const resized = await resizeImageBase64(raw, 1400)
+      setCapturedPhotos(prev => [...prev, { dataUrl: resized, copies: 1, id: Date.now() + Math.random() }])
+    }
+    if (files.length) showToast(`${files.length} foto${files.length > 1 ? 's' : ''} añadida${files.length > 1 ? 's' : ''} al pedido`)
+  }
+
+  // ============================================
   // PEDIDO Y PAGO
   // ============================================
-  const totalCopies = [...selected.map(p => p.copies), ...capturedPhotos.map(p => p.copies)].reduce((a,b) => a+b, 0)
+  const totalCopies = capturedPhotos.map(p => p.copies).reduce((a,b) => a+b, 0)
   const priceForPhoto = (copies) => {
     const c = Math.min(copies,3)
     const p1 = parseFloat(textos.precio1) || 5
@@ -491,8 +448,7 @@ export default function MobileApp() {
     return prices[c] || 0
   }
   const totalPrice = () => {
-    const all = [...selected.map(p=>p.copies), ...capturedPhotos.map(p=>p.copies)]
-    return all.reduce((sum, copies) => sum + priceForPhoto(copies), 0).toFixed(2)
+    return capturedPhotos.reduce((sum, p) => sum + priceForPhoto(p.copies), 0).toFixed(2)
   }
 
   const totalCents = Math.round(parseFloat(totalPrice()) * 100)
@@ -535,18 +491,6 @@ export default function MobileApp() {
     const targetUuid = printerUuid || uuid
     if (!targetUuid) throw new Error('No hay habitación destino')
     const notifyItems = []
-    for (const photo of selected) {
-      const proxyUrl = getImageUrl(photo.uri_full || photo.uri)
-      const resp = await fetch(proxyUrl)
-      const blob = await resp.blob()
-      const base64 = await new Promise(res => { const reader = new FileReader(); reader.onload = () => res(reader.result); reader.readAsDataURL(blob) })
-      const resized = await resizeImageBase64(base64, 1400)
-      for (let i = 0; i < photo.copies; i++) {
-        const uniqueName = `g${Date.now()}${Math.random().toString(36).substr(2,9)}_${i+1}`
-        await sendPhoto({ event: targetUuid, image: resized, times: 1, name: uniqueName, phone: '000000000', orientation: 'portrait' })
-      }
-      notifyItems.push({ thumbnail: await resizeImageBase64(resized, 300), copies: photo.copies })
-    }
     for (const photo of capturedPhotos) {
       for (let i = 0; i < (photo.copies || 1); i++) {
         const uniqueName = `c${Date.now()}${Math.random().toString(36).substr(2,9)}_${i+1}`
@@ -565,6 +509,20 @@ export default function MobileApp() {
   // ============================================
   // RENDER POR PASO
   // ============================================
+  if (serviceUnavailable) {
+    return (
+      <div className="mobile-app event-container">
+        <img src="/assets/hotel-logo.png" alt="Logo" className="event-logo" />
+        <div className="service-unavailable-box">
+          <p><span className="service-unavailable-flag">🇪🇸</span>Servicio no disponible temporalmente. Lamentamos las molestias.</p>
+          <p><span className="service-unavailable-flag">🇬🇧</span>Service temporarily unavailable. We apologize for the inconvenience.</p>
+          <p><span className="service-unavailable-flag">🇫🇷</span>Service temporairement indisponible. Nous nous excusons pour la gêne occasionnée.</p>
+          <p><span className="service-unavailable-flag">🇩🇪</span>Dienst vorübergehend nicht verfügbar. Wir entschuldigen uns für die Unannehmlichkeiten.</p>
+        </div>
+      </div>
+    )
+  }
+
   if (step === STEP_EVENT) {
     if (loadingFromQR) {
       return (
@@ -603,31 +561,31 @@ export default function MobileApp() {
         <div className="mobile-header d-flex align-items-center gap-3 justify-content-between">
           <img src="/assets/hotel-logo.png" alt="Logo" className="mobile-header-ic-launcher-large" />
           <div className="flex-grow-1">
-            <div className="mobile-header-title"><span style={{fontSize:'1.2rem',marginRight:'6px'}}>🇪🇸</span> Elige tus fotos para imprimir<br /><small className="text-muted"><span style={{fontSize:'1rem',marginRight:'6px'}}>🇬🇧</span> Choose your photos to print</small></div>
+            <div className="mobile-header-title"><span style={{fontSize:'1.2rem',marginRight:'6px'}}>🇪🇸</span> Sube o haz tus fotos para imprimir<br /><small className="text-muted"><span style={{fontSize:'1rem',marginRight:'6px'}}>🇬🇧</span> Upload or take your photos to print</small></div>
           </div>
+          <input ref={galleryFileInputRef} type="file" accept="image/*" multiple style={{ display: 'none' }} onChange={handleGalleryFilesSelected} />
+          <button className="btn btn-sm btn-outline-warning" title="Subir de tu galería" style={{fontSize:'18px',padding:'2px 6px'}} onClick={() => galleryFileInputRef.current?.click()}><i className="bi bi-images" /></button>
           <button className="btn btn-sm btn-outline-warning" title="Hacer foto" style={{fontSize:'18px',padding:'2px 6px'}} onClick={() => setStep(STEP_CAMERA)}><i className="bi bi-camera" /></button>
           <button className="btn btn-sm btn-outline-warning" title="Términos" style={{fontSize:'18px',padding:'2px 6px'}} onClick={() => setShowTermsModal(true)}><i className="bi bi-info-circle" /></button>
         </div>
-        {loadingPhotos ? (
-          <div className="gallery-loader"><span className="spinner-border text-warning" /></div>
+        {capturedPhotos.length === 0 ? (
+          <div className="gallery-empty-state">
+            <i className="bi bi-camera" />
+            <p>Sube una foto de tu galería o haz una foto nueva para imprimirla en recepción.</p>
+          </div>
         ) : (
           <div className="gallery-grid">
-            {photos.map((photo,i) => (
-              <div key={i} className={`mobile-photo-card ${isSelected(photo) ? 'selected' : ''}`} onClick={() => toggleSelect(photo)}>
-                <img src={getImageUrl(photo.uri)} alt="" loading="lazy" draggable={false} onContextMenu={e=>e.preventDefault()} onDragStart={e=>e.preventDefault()} />
-                {isSelected(photo) && <div className="selected-badge"><i className="bi bi-check" /></div>}
+            {capturedPhotos.map(photo => (
+              <div key={photo.id} className="mobile-photo-card selected">
+                <img src={photo.dataUrl} alt="" draggable={false} onContextMenu={e=>e.preventDefault()} onDragStart={e=>e.preventDefault()} />
               </div>
             ))}
           </div>
         )}
-        <div ref={loaderRef} className="infinite-loader">
-          {loadingMore && <span className="spinner-border spinner-border-sm text-warning" />}
-          {!loadingMore && page >= lastPage && photos.length > 0 && <span className="all-loaded-text"><i className="bi bi-check-circle me-1 text-success" />Todas las fotos cargadas</span>}
-        </div>
-        {(selected.length > 0 || capturedPhotos.length > 0) && (
+        {capturedPhotos.length > 0 && (
           <div className="order-float-button">
             <button className="btn btn-warning w-100 fw-bold shadow-lg" onClick={() => setStep(STEP_ORDER)}>
-              <i className="bi bi-bag-check me-2" />Ver pedido ({selected.length + capturedPhotos.length} foto{selected.length + capturedPhotos.length > 1 ? 's' : ''})
+              <i className="bi bi-bag-check me-2" />Ver pedido ({capturedPhotos.length} foto{capturedPhotos.length > 1 ? 's' : ''})
             </button>
           </div>
         )}
@@ -663,7 +621,7 @@ export default function MobileApp() {
           <div className="camera-shutter"><button className="shutter-btn" onClick={capturePhoto} /></div>
           {capturedPhotos.length > 0 && (
             <div className="captured-section">
-              <p className="captured-title">Fotos tomadas ({capturedPhotos.length})</p>
+              <p className="captured-title">Tus fotos ({capturedPhotos.length})</p>
               <div className="captured-thumbnails">
                 {capturedPhotos.map(p => (
                   <div key={p.id} className="captured-thumb-wrapper">
@@ -714,27 +672,11 @@ export default function MobileApp() {
           <span className="fw-bold" style={{color:'var(--pb-accent)'}}>Tu pedido</span>
         </div>
         <div className="order-summary-container">
-          {selected.map((photo,i) => (
-            <div key={i} className="order-photo-item">
-              <img src={getImageUrl(photo.uri)} alt="" className="order-photo-thumb" draggable={false} onContextMenu={e=>e.preventDefault()} onDragStart={e=>e.preventDefault()} />
-              <div className="order-photo-info">
-                <div className="order-photo-label">Foto de la habitación</div>
-                <div className="order-copies-selector">
-                  <span className="order-copies-label">Copias:</span>
-                  {[1,2,3].map(n => (
-                    <button key={n} className={`btn btn-sm order-copies-btn ${photo.copies === n ? 'order-copies-btn-active' : 'order-copies-btn-inactive'}`} onClick={() => updateCopies(photo.uri, n)}>{n}</button>
-                  ))}
-                  <span className="order-price">{priceForPhoto(photo.copies).toFixed(2)}€</span>
-                </div>
-              </div>
-              <button className="btn btn-sm btn-outline-danger order-delete-btn" onClick={() => toggleSelect(photo)}><i className="bi bi-trash" /></button>
-            </div>
-          ))}
           {capturedPhotos.map(photo => (
             <div key={photo.id} className="order-photo-item">
               <img src={photo.dataUrl} alt="" className="order-photo-thumb" draggable={false} onContextMenu={e=>e.preventDefault()} onDragStart={e=>e.preventDefault()} />
               <div className="order-photo-info">
-                <div className="order-photo-label">Foto tomada</div>
+                <div className="order-photo-label">Tu foto</div>
                 <div className="order-copies-selector">
                   <span className="order-copies-label">Copias:</span>
                   {[1,2,3].map(n => (
@@ -842,7 +784,7 @@ export default function MobileApp() {
         <h2 className="success-title">¡Pedido enviado!</h2>
         <p className="success-text">Tu pedido ha sido enviado. Tus fotos se imprimirán en breve.</p>
         <p className="success-small-text">¡Gracias por tu compra!</p>
-        <button className="btn btn-outline-warning back-button" onClick={() => { setStep(STEP_GALLERY); setSelected([]); setCapturedPhotos([]); setAppliedCoupon(null); setDiscountAmount(0); setCouponCode(''); }}>
+        <button className="btn btn-outline-warning back-button" onClick={() => { setStep(STEP_GALLERY); setCapturedPhotos([]); setAppliedCoupon(null); setDiscountAmount(0); setCouponCode(''); }}>
           <i className="bi bi-check-circle me-2" />Finalizar
         </button>
         {textos?.empresa && <p className="company-footer"><i className="bi bi-camera me-1" />{textos.empresa}</p>}

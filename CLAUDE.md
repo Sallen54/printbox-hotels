@@ -36,7 +36,7 @@ A diferencia de Adventures (donde Electron es legacy pero el `package.json` toda
 | Ruta | Componente | Propósito |
 | --- | --- | --- |
 | `/viewer` | [src/viewer/ViewerApp.jsx](src/viewer/ViewerApp.jsx) | Monitor de recepción — galería de una habitación, impresión manual, Admin (precios/textos/email de recepción), QR |
-| `/mobile` | [src/mobile/MobileApp.jsx](src/mobile/MobileApp.jsx) | El móvil del huésped — entra vía QR (`?habitacion=`), navega la galería, hace fotos con cámara, arma un pedido, paga, dispara el aviso a recepción |
+| `/mobile` | [src/mobile/MobileApp.jsx](src/mobile/MobileApp.jsx) | El móvil del huésped — entra vía QR (`?habitacion=`), sube fotos ya guardadas en el móvil (`<input type="file">`), hace fotos con cámara, o navega la galería de la habitación, arma un pedido, paga, dispara el aviso a recepción |
 | `/printer` | [src/printer/PrinterApp.jsx](src/printer/PrinterApp.jsx) | Hace polling de fotos marcadas "para imprimir", las descarga, genera un PDF y las envía a la impresora física |
 
 Las tres llaman siempre a través de la única capa de API compartida [src/shared/api.js](src/shared/api.js) — nunca llames `fetch` directamente desde un componente.
@@ -70,6 +70,8 @@ Las URLs de las imágenes de las fotos apuntan al host de Laravel y se reescribe
 ### Aviso a recepción por e-mail (`/printbox/notify-order`)
 
 Pieza nueva frente a Adventures. Se dispara **una vez por pedido completo** (no una vez por foto/copia) desde tres puntos de [src/mobile/MobileApp.jsx](src/mobile/MobileApp.jsx): dentro de `sendOrderPhotos()` (llamada tanto tras pago con Square como con PayPal) y en el botón "Subir fotos directamente" del paso de cámara (gratis, sin pago). El helper [src/shared/api.js](src/shared/api.js) `notifyRoomOrder({ room, items, total, paymentMethod })` envía `items` con un thumbnail pequeño (~300px, generado client-side con `resizeImageBase64` a partir de la misma foto que ya se está subiendo — **no se pide nada a la API de Laravel**) y el nº de copias por foto.
+
+`capturedPhotos` (el estado de MobileApp que alimenta `sendOrderPhotos()`) recibe fotos de **dos orígenes distintos** con la misma forma `{ dataUrl, copies, id }`: las capturadas con la cámara (`capturePhoto()`) y las subidas desde la propia galería del móvil vía `<input type="file" accept="image/*" multiple>` (`handleGalleryFilesSelected()`, botón con icono `bi-images` en la cabecera de `STEP_GALLERY`). Ambas comparten exactamente el mismo flujo de pedido/pago/aviso — no hay forma de distinguir el origen una vez añadidas al array, ni falta hace.
 
 - **`backend/routes/printbox.js`** (dev): solo loguea por consola, no hay SMTP configurado en local. Limitación de desarrollo aceptada.
 - **`proxy.php`** (prod): lee `email_recepcion` de `getTextosFile($configDir, $room)` (mismo mecanismo que precios/empresa) vía `getRoomReceptionEmail()`, y si existe, construye y envía un e-mail HTML con las miniaturas embebidas inline (MIME `multipart/related`, Content-ID, sin librerías) usando `mail()` nativo de PHP — ver función `sendRoomOrderEmail()`. Si no hay email configurado para la habitación, responde `{ ok: true, skipped: true }` sin enviar nada ni romper el flujo del huésped.

@@ -3,6 +3,20 @@ RewriteEngine On
 
 RewriteBase /
 
+# Bloquear acceso público directo a logs, cookies de sesión y archivos de config.
+# Estos archivos los lee/escribe proxy.php internamente (filesystem), nunca deben
+# servirse por HTTP: pba_cookies.txt es la sesión Sanctum contra Laravel, y los .log
+# pueden contener cuerpos de petición completos (tokens de pago, datos de contacto).
+<FilesMatch "\.(log|txt)$|^pba_cookies">
+    Require all denied
+</FilesMatch>
+<IfModule !mod_authz_core.c>
+    <FilesMatch "\.(log|txt)$|^pba_cookies">
+        Order allow,deny
+        Deny from all
+    </FilesMatch>
+</IfModule>
+
 # CSP disabled for debugging - allows all resources including data URLs
 Header always set Content-Security-Policy "default-src *; script-src * 'unsafe-inline' 'unsafe-eval'; style-src * 'unsafe-inline'; img-src * data:; font-src * data:; connect-src *; frame-src *; object-src *;"
 
