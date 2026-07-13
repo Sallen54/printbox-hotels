@@ -82,12 +82,12 @@ function getTextosFile($configDir, $eventCode = '') {
     return $configDir . '/textos.txt';
 }
 
-// Lee email_recepcion directamente del textos_<habitación>.txt (o textos.txt global)
-// sin pasar por el resto del parseo de /config, para mantener este endpoint independiente.
-function getRoomReceptionEmail($configDir, $room) {
-    $textosFile = getTextosFile($configDir, $room);
-    // Limpiar caché de stat: sin esto, un archivo textos_<habitación>.txt recién escrito
-    // por /config (p. ej. segundos antes desde el panel Admin) puede parecer inexistente.
+// Lee email_recepcion del textos.txt GLOBAL del despliegue: cada despliegue es UN hotel,
+// así que la recepción es única y el email vale para todas las habitaciones.
+function getHotelReceptionEmail($configDir) {
+    $textosFile = getTextosFile($configDir, '');
+    // Limpiar caché de stat: sin esto, un textos.txt recién escrito por /config
+    // (p. ej. segundos antes desde el panel Admin) puede parecer inexistente.
     clearstatcache(true, $textosFile);
     if (!file_exists($textosFile)) return '';
     $lines = file($textosFile, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
@@ -667,10 +667,10 @@ if (strpos($uri, '/printbox/') === 0) {
         $paymentMethod = $data['paymentMethod'] ?? '';
 
         $configDir = getConfigDir();
-        $emailTo = getRoomReceptionEmail($configDir, $room);
+        $emailTo = getHotelReceptionEmail($configDir);
 
         if (!$emailTo) {
-            $debugFile = getTextosFile($configDir, $room);
+            $debugFile = getTextosFile($configDir, '');
             echo json_encode([
                 'ok' => true,
                 'skipped' => true,

@@ -110,7 +110,7 @@ npm run build
 ```
 Sube por FTP a la raíz del subdominio: todo `dist/` (ya incluye `proxy.php`, `.htaccess`, `config/` copiados automáticamente por `scripts/copy-dist-assets.js`).
 
-> ⚠️ No sobreescribir `config/` si ya tiene datos configurados (precios, email de recepción, etc. por habitación).
+> ⚠️ No sobreescribir `config/` si ya tiene datos configurados (precios, email de recepción, etc. del hotel).
 
 Ver también `guia_ionos.txt` para la guía genérica paso a paso de FTP.
 
@@ -190,7 +190,7 @@ Igual que en Adventures: hace polling de las fotos marcadas para imprimir, gener
 - Un pedido con una foto a 3 copias genera **una fila** en el email (no 3 envíos).
 
 ### En producción (IONOS / `proxy.php`)
-Lee el e-mail de recepción configurado para esa habitación (`email_recepcion` en `config/textos_<habitación>.txt`) y envía un email HTML con las miniaturas embebidas inline (MIME `multipart/related`, sin librerías externas) usando **`mail()` nativo de PHP** — elegido deliberadamente como la opción más simple, sin SMTP ni PHPMailer.
+Lee el e-mail de recepción del hotel (`email_recepcion` en `config/textos.txt` — único para todo el despliegue) y envía un email HTML con las miniaturas embebidas inline (MIME `multipart/related`, sin librerías externas) usando **`mail()` nativo de PHP** — elegido deliberadamente como la opción más simple, sin SMTP ni PHPMailer.
 
 > ⚠️ **Limitación conocida y aceptada:** la fiabilidad de `mail()` en IONOS depende de la configuración SPF/DKIM del dominio — puede terminar en spam. Si en el futuro hace falta más fiabilidad, la vía sería migrar a SMTP real (Gmail, Brevo, SendGrid, etc.), pero eso queda fuera del alcance actual a propósito.
 
@@ -217,7 +217,7 @@ delay;5
 ```
 > ⚠️ Orden exacto — no cambiar posición de líneas (se parsea por número de línea).
 
-### `config/textos.txt` (o `textos_<habitación>.txt` por habitación)
+### `config/textos.txt`
 ```
 es:¡Consigue tu foto de la habitación!
 en:Get your room photo!
@@ -229,7 +229,7 @@ precio3:12
 empresa:Printbox Hotels
 email_recepcion:recepcion@tuhotel.com
 ```
-Cada habitación puede tener sus propios precios y su propio email de recepción sin afectar a las demás (se guarda en `textos_<código>.txt`).
+**Precios, textos y email de recepción son únicos por hotel** (cada hotel = un despliegue con su propia carpeta `config/`), se configuran una sola vez en el Admin del Monitor y valen para todas las habitaciones. `proxy.php` conserva el soporte de archivos por-evento (`textos_<código>.txt`, herencia de Adventures) por compatibilidad, pero la app de Hotels ya no los escribe ni los lee.
 
 ---
 
@@ -273,11 +273,11 @@ App → POST /printbox/photo-send { event, image: base64, times }
 
 AVISO A RECEPCIÓN (una vez por pedido completo)
 App → POST /printbox/notify-order { room, items: [{thumbnail, copies}], total, paymentMethod }
-    → lee email_recepcion de textos_<room>.txt → envía e-mail (mail() en prod / log en dev)
+    → lee email_recepcion del textos.txt global del hotel → envía e-mail (mail() en prod / log en dev)
 
-CONFIG (precios + email de recepción, por habitación)
-App → GET  /config?eventCode=<habitación>
-App → POST /config?eventCode=<habitación>
+CONFIG (precios + email de recepción, únicos para todo el hotel)
+App → GET  /config
+App → POST /config
 ```
 
 ---

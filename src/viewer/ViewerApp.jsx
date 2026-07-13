@@ -121,12 +121,10 @@ export default function ViewerApp() {
   // ============================================
   useEffect(() => {
     const saved = loadViewerState()
-    const eventoFromStorage = saved?.config?.evento
-    const eventCode = eventoFromStorage ? eventoFromStorage.replace('ev-', '') : ''
+    // Config global del hotel: precios/email/textos son por-hotel, no por-habitación
     const configUrl = BACKEND === '/' ? '/config' : `${BACKEND}/config`
-    const configUrlWithEvent = eventCode ? `${configUrl}?eventCode=${encodeURIComponent(eventCode)}` : configUrl
     Promise.all([
-      fetch(configUrlWithEvent).then(r => r.json()),
+      fetch(configUrl).then(r => r.json()),
       fetch(BACKEND === '/' ? '/print/count' : `${BACKEND}/print/count`).then(r => r.json()).catch(() => ({ count: 0 })),
     ]).then(([d, c]) => {
       const mergedConfig = {
@@ -198,7 +196,8 @@ export default function ViewerApp() {
     }
     setAdminError('')
     try {
-      const saveResult = await saveConfig(newConfig, newTextos, adminEventCode)
+      // Sin eventCode: los textos/precios/email se guardan en el textos.txt global del hotel
+      const saveResult = await saveConfig(newConfig, newTextos)
       if (saveResult.textos) { setTextos(saveResult.textos); localStorage.removeItem('printbox_viewer_state') }
       if (saveResult.config) setConfig(saveResult.config)
       setAdminError('✓ Configuración guardada correctamente')
@@ -456,7 +455,7 @@ export default function ViewerApp() {
         <div className="modal d-block event-modal-overlay" tabIndex="-1">
           <div className="modal-dialog modal-dialog-centered modal-lg">
             <div className="modal-content bg-dark border border-secondary event-modal">
-              <div className="modal-header border-secondary"><h5 className="modal-title text-light">Configuración de la Habitación</h5><button type="button" className="btn-close btn-close-white" onClick={() => setShowAdminConfig(false)} /></div>
+              <div className="modal-header border-secondary"><h5 className="modal-title text-light">Configuración del Hotel</h5><button type="button" className="btn-close btn-close-white" onClick={() => setShowAdminConfig(false)} /></div>
               <div className="modal-body p-4">
                 <div className="row g-3">
                   <div className="col-md-6"><label className="form-label text-light">Número de Habitación (Monitor)</label><div className="input-group"><span className="input-group-text bg-black border-secondary text-warning fw-bold font-mono">ev-</span><input type="text" inputMode="numeric" className="form-control bg-black border-secondary text-light font-mono" value={adminEventCode} onChange={e => setAdminEventCode(e.target.value.replace(/\D/g, ''))} /></div></div>
@@ -464,7 +463,7 @@ export default function ViewerApp() {
                   <div className="col-md-4"><label className="form-label text-light">Precio 1 Foto (€)</label><input type="number" step="0.01" className="form-control bg-black border-secondary text-light" value={adminPrice1} onChange={e => setAdminPrice1(e.target.value)} /></div>
                   <div className="col-md-4"><label className="form-label text-light">Precio 2 Fotos (€)</label><input type="number" step="0.01" className="form-control bg-black border-secondary text-light" value={adminPrice2} onChange={e => setAdminPrice2(e.target.value)} /></div>
                   <div className="col-md-4"><label className="form-label text-light">Precio 3+ Fotos (€)</label><input type="number" step="0.01" className="form-control bg-black border-secondary text-light" value={adminPrice3} onChange={e => setAdminPrice3(e.target.value)} /></div>
-                  <div className="col-md-12"><label className="form-label text-light">Email de Recepción</label><input type="email" placeholder="recepcion@tuhotel.com" className="form-control bg-black border-secondary text-light" value={adminEmailRecepcion} onChange={e => setAdminEmailRecepcion(e.target.value)} /><div className="form-text text-secondary">A esta dirección se enviará un aviso con miniaturas y copias cada vez que esta habitación envíe fotos.</div></div>
+                  <div className="col-md-12"><label className="form-label text-light">Email de Recepción</label><input type="email" placeholder="recepcion@tuhotel.com" className="form-control bg-black border-secondary text-light" value={adminEmailRecepcion} onChange={e => setAdminEmailRecepcion(e.target.value)} /><div className="form-text text-secondary">Vale para todo el hotel: a esta dirección se enviará un aviso con miniaturas y copias cada vez que cualquier habitación envíe fotos. Los precios también son únicos para todas las habitaciones.</div></div>
                   <div className="col-md-12">
                     <div className="bg-black border border-secondary rounded-3 p-3">
                       <div className="form-check form-switch">

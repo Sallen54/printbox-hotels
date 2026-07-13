@@ -8,6 +8,8 @@ Printbox Hotels es un sistema de envío/impresión de fotos por habitación para
 
 Este proyecto es una copia personalizada de **printbox-adventures** (carpeta hermana en `Proyectos/`), creada en julio 2026. Comparte toda la arquitectura técnica y el mismo backend Laravel externo; los cambios frente a Adventures son: sin Electron (nunca lo tuvo), terminología "habitación" en vez de "evento" de cara al usuario, paleta de colores propia, hueco de logo del hotel, y el endpoint nuevo `/printbox/notify-order` para el aviso a recepción.
 
+**Modelo de despliegue: una página por hotel.** Cada hotel tendrá su propio despliegue (carpeta IONOS con su `proxy.php` + `config/` propios) desde el que controla sus habitaciones; cada habitación sigue siendo un "evento" del Laravel compartido. Por eso los ajustes del `config/` del despliegue (p. ej. `servicio_disponible` en `servidor_api.txt`) son de ámbito **hotel**, no de habitación — eso es lo deseado, no un accidente. Primera instancia real: `https://vf.incomar.net/`.
+
 ## Comandos
 
 ```bash
@@ -74,7 +76,7 @@ Pieza nueva frente a Adventures. Se dispara **una vez por pedido completo** (no 
 `capturedPhotos` (el estado de MobileApp que alimenta `sendOrderPhotos()`) recibe fotos de **dos orígenes distintos** con la misma forma `{ dataUrl, copies, id }`: las capturadas con la cámara (`capturePhoto()`) y las subidas desde la propia galería del móvil vía `<input type="file" accept="image/*" multiple>` (`handleGalleryFilesSelected()`, botón con icono `bi-images` en la cabecera de `STEP_GALLERY`). Ambas comparten exactamente el mismo flujo de pedido/pago/aviso — no hay forma de distinguir el origen una vez añadidas al array, ni falta hace.
 
 - **`backend/routes/printbox.js`** (dev): solo loguea por consola, no hay SMTP configurado en local. Limitación de desarrollo aceptada.
-- **`proxy.php`** (prod): lee `email_recepcion` de `getTextosFile($configDir, $room)` (mismo mecanismo que precios/empresa) vía `getRoomReceptionEmail()`, y si existe, construye y envía un e-mail HTML con las miniaturas embebidas inline (MIME `multipart/related`, Content-ID, sin librerías) usando `mail()` nativo de PHP — ver función `sendRoomOrderEmail()`. Si no hay email configurado para la habitación, responde `{ ok: true, skipped: true }` sin enviar nada ni romper el flujo del huésped.
+- **`proxy.php`** (prod): lee `email_recepcion` del `textos.txt` **global del hotel** vía `getHotelReceptionEmail()` (la recepción es única por despliegue), y si existe, construye y envía un e-mail HTML con las miniaturas embebidas inline (MIME `multipart/related`, Content-ID, sin librerías) usando `mail()` nativo de PHP — ver función `sendRoomOrderEmail()`. Si no hay email configurado, responde `{ ok: true, skipped: true }` sin enviar nada ni romper el flujo del huésped.
 
 ### Pipeline de impresión
 
@@ -82,11 +84,11 @@ Pieza nueva frente a Adventures. Se dispara **una vez por pedido completo** (no 
 
 ### Ficheros de configuración: delimitados por punto y coma/dos puntos, sensibles a posición y a clave
 
-La configuración vive en `config/servidor_api.txt` / `config/textos_<habitación>.txt`, leída/escrita por [backend/routes/config.js](backend/routes/config.js) y reflejada en `proxy.php`:
+La configuración vive en `config/servidor_api.txt` / `config/textos.txt`, leída/escrita por [backend/routes/config.js](backend/routes/config.js) y reflejada en `proxy.php`:
 
-- `servidor_api.txt` — líneas `clave;valor`, **parseadas posicionalmente por número de línea** (servidor, evento, evento_printer, timer, impresora, delay) — no reordenes las líneas.
-- `textos_<códigoHabitación>.txt` (o simplemente `textos.txt` cuando no hay código) — líneas `clave:valor` (textos es/en/fr/de, precio1/2/3, empresa, **email_recepcion**), parseadas por nombre de clave. Cada habitación tiene su propio archivo, así que precios y email de recepción son independientes por habitación (ver `getTextosFile()` en proxy.php y `normalizeEventCode()` en api.js).
-- Los códigos se normalizan quitando un prefijo `ev-`/`ev_` antes de usarse como nombre de fichero/clave de búsqueda — haz lo mismo de forma consistente si añades nuevas búsquedas de configuración indexadas por habitación.
+- `servidor_api.txt` — líneas `clave;valor`, **parseadas posicionalmente por número de línea** (servidor, evento, evento_printer, timer, impresora, delay, servicio_disponible) — no reordenes las líneas.
+- `textos.txt` — líneas `clave:valor` (textos es/en/fr/de, precio1/2/3, empresa, **email_recepcion**), parseadas por nombre de clave. **Ámbito hotel**: precios, textos y email se configuran una vez en el Admin y valen para todas las habitaciones del despliegue. `proxy.php` conserva el mecanismo por-evento de Adventures (`getTextosFile($configDir, $eventCode)` → `textos_<código>.txt` cuando llega `?eventCode=`), pero el frontend de Hotels ya **no** pasa `eventCode` a `/config` — no reintroduzcas ese parámetro sin motivo.
+- Los códigos de habitación se normalizan quitando un prefijo `ev-`/`ev_` antes de usarse (ver `normalizeEventCode()` en api.js).
 - Si añades un nuevo campo de configuración (como se hizo con `email_recepcion`), tócalo en **cuatro** sitios: `backend/routes/config.js` (GET y POST), `proxy.php` (GET y POST, además del array `$validKeys` en ambos), y el formulario de Admin en `ViewerApp.jsx`.
 
 ### Pagos

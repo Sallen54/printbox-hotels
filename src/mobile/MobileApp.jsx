@@ -191,9 +191,10 @@ export default function MobileApp() {
   }, [eventCode, step, capturedPhotos, uuid])
 
   // Refrescar precios y evento impresora cada 5s
+  // (config global del hotel — precios/email son por-hotel, no por-habitación)
   useEffect(() => {
     const interval = setInterval(() => {
-      getConfig(eventCode || undefined).then(d => {
+      getConfig().then(d => {
         if (d.textos) applyTextos(d.textos)
         setServiceUnavailable(d.config?.servicio_disponible === false)
         if (d.config?.evento_printer) {
@@ -355,7 +356,7 @@ export default function MobileApp() {
       const id = await findEvent(`ev-${eventCodeToUse}`)
       setUuid(id)
       uuidRef.current = id
-      const configData = await getConfig(eventCodeToUse)
+      const configData = await getConfig()
       if (configData.textos) applyTextos(configData.textos)
       if (configData.config?.evento_printer) {
         const printerCode = configData.config.evento_printer.replace(/^ev[-_]?/i, '')
