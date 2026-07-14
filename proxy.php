@@ -2,7 +2,16 @@
 error_reporting(E_ALL);
 ini_set('display_errors', 0); // No mostrar errores en producción
 
-header('Access-Control-Allow-Origin: *');
+// Con cookies de sesión hace falta reflejar el Origin y permitir credenciales
+// (Allow-Origin: * es incompatible con credenciales). En prod el SPA es same-origin,
+// así que esto solo importa para dev cross-origin (localhost:3000 → :4000) y curl.
+$__origin = $_SERVER['HTTP_ORIGIN'] ?? '';
+if ($__origin !== '') {
+    header('Access-Control-Allow-Origin: ' . $__origin);
+    header('Access-Control-Allow-Credentials: true');
+} else {
+    header('Access-Control-Allow-Origin: *');
+}
 header('Access-Control-Allow-Methods: GET, POST, OPTIONS, PUT, DELETE');
 header('Access-Control-Allow-Headers: Content-Type, X-Requested-With');
 header('Access-Control-Max-Age: 86400');
@@ -70,6 +79,83 @@ function getConfigDir() {
     return $scriptConfig;
 }
 
+// ── Sesión de hotel (cookie firmada HMAC, sin BD) ──
+// Misma lógica que backend/lib/session.js (dev). El token solo lo valida el mismo
+// backend que lo emitió, así que el secreto es local a cada despliegue.
+define('PBH_COOKIE', 'pbh_session');
+define('PBH_TTL', 43200); // 12 h en segundos
+
+function pbhSanitizeHotelId($id) {
+    return preg_replace('/[^a-z0-9_-]/', '', strtolower(trim((string)$id)));
+}
+
+function getSessionSecret($base) {
+    $f = $base . '/session_secret.txt';
+    if (is_file($f)) { $s = trim(@file_get_contents($f)); if ($s !== '') return $s; }
+    $secret = bin2hex(random_bytes(32));
+    if (!is_dir($base)) @mkdir($base, 0755, true);
+    @file_put_contents($f, $secret);
+    return $secret;
+}
+
+function pbhMakeToken($hotelId, $base) {
+    $expiry = time() + PBH_TTL;
+    $mac = hash_hmac('sha256', $hotelId . '|' . $expiry, getSessionSecret($base));
+    return $hotelId . '|' . $expiry . '|' . $mac;
+}
+
+function pbhVerifyToken($token, $base) {
+    if (!is_string($token) || $token === '') return null;
+    $parts = explode('|', $token);
+    if (count($parts) !== 3) return null;
+    list($hotelId, $expiryStr, $mac) = $parts;
+    $expiry = (int)$expiryStr;
+    if ($hotelId === '' || $expiry <= 0 || time() > $expiry) return null;
+    $expected = hash_hmac('sha256', $hotelId . '|' . $expiry, getSessionSecret($base));
+    if (!hash_equals($expected, $mac)) return null;
+    return $hotelId;
+}
+
+function getSessionHotelId($base) {
+    return pbhVerifyToken($_COOKIE[PBH_COOKIE] ?? '', $base);
+}
+
+function readHotelsAccounts($base) {
+    $f = $base . '/hotels.json';
+    if (!is_file($f)) return [];
+    $parsed = json_decode(@file_get_contents($f), true);
+    return is_array($parsed) ? $parsed : [];
+}
+
+// Carpeta de config del hotel. hotelId válido → config/hotels/<id>; sin id → global
+// (compat con el modelo antiguo de un solo hotel / QRs viejos sin ?hotel=).
+function resolveHotelDir($base, $hotelId, $create = false) {
+    $id = pbhSanitizeHotelId($hotelId);
+    if ($id === '') return $base;
+    $dir = $base . '/hotels/' . $id;
+    if ($create && !is_dir($dir)) @mkdir($dir, 0755, true);
+    return $dir;
+}
+
+// Carpeta de config para LECTURA: sesión (panel) o ?hotel= (móvil); si no, global.
+function getReadConfigDir() {
+    $base = getConfigDir();
+    $hotelId = getSessionHotelId($base);
+    if (!$hotelId) $hotelId = $_GET['hotel'] ?? '';
+    return resolveHotelDir($base, $hotelId);
+}
+
+function pbhSetSessionCookie($token, $ttl) {
+    $secure = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off');
+    setcookie(PBH_COOKIE, $token, [
+        'expires'  => $ttl > 0 ? time() + $ttl : time() - 3600,
+        'path'     => '/',
+        'httponly' => true,
+        'samesite' => 'Lax',
+        'secure'   => $secure,
+    ]);
+}
+
 function getTextosFile($configDir, $eventCode = '') {
     // Si hay un código de evento, usar archivo específico del evento
     // Ejemplo: eventCode "1668042" → "textos_1668042.txt"
@@ -97,6 +183,30 @@ function getHotelReceptionEmail($configDir) {
         }
     }
     return '';
+}
+
+// Habitaciones registradas del hotel: [{ nombre, codigo }] en config/habitaciones.json.
+// codigo se guarda normalizado (sin prefijo ev-).
+function readHabitaciones($configDir) {
+    $file = $configDir . '/habitaciones.json';
+    clearstatcache(true, $file);
+    if (!file_exists($file)) return [];
+    $parsed = json_decode(file_get_contents($file), true);
+    return is_array($parsed) ? $parsed : [];
+}
+
+function sanitizeHabitaciones($input) {
+    if (!is_array($input)) return [];
+    $result = [];
+    foreach ($input as $h) {
+        if (!is_array($h)) continue;
+        $nombre = mb_substr(trim(preg_replace('/[\r\n\t]/', ' ', (string)($h['nombre'] ?? ''))), 0, 40);
+        $codigo = preg_replace('/[^0-9a-zA-Z_-]/', '', preg_replace('/^ev[-_]?/i', '', trim((string)($h['codigo'] ?? ''))));
+        if ($codigo === '') continue;
+        $result[] = ['nombre' => $nombre, 'codigo' => $codigo];
+        if (count($result) >= 500) break;
+    }
+    return $result;
 }
 
 function encodeMimeSubject($text) {
@@ -307,6 +417,104 @@ if ($uri === '/health') {
     exit();
 }
 
+// ── /auth/* (login por hotel; cuentas en config/hotels.json creadas por Printbox) ──
+if ($uri === '/auth/login' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+    $base = getConfigDir();
+    $user = trim((string)($data['user'] ?? ''));
+    $password = (string)($data['password'] ?? '');
+    if ($user === '' || $password === '') {
+        http_response_code(400);
+        echo json_encode(['error' => 'Usuario y contraseña requeridos']);
+        exit();
+    }
+    $hotels = readHotelsAccounts($base);
+    $foundId = null; $foundNombre = '';
+    foreach ($hotels as $hid => $h) {
+        if (($h['user'] ?? '') === $user && !empty($h['passHash']) && password_verify($password, $h['passHash'])) {
+            $foundId = $hid; $foundNombre = $h['nombre'] ?? ''; break;
+        }
+    }
+    if (!$foundId) {
+        http_response_code(401);
+        echo json_encode(['error' => 'Usuario o contraseña incorrectos']);
+        exit();
+    }
+    pbhSetSessionCookie(pbhMakeToken($foundId, $base), PBH_TTL);
+    echo json_encode(['ok' => true, 'hotelId' => $foundId, 'nombre' => $foundNombre]);
+    exit();
+}
+
+if ($uri === '/auth/me' && $_SERVER['REQUEST_METHOD'] === 'GET') {
+    $base = getConfigDir();
+    $hotelId = getSessionHotelId($base);
+    if (!$hotelId) {
+        http_response_code(401);
+        echo json_encode(['error' => 'No autenticado']);
+        exit();
+    }
+    $hotels = readHotelsAccounts($base);
+    echo json_encode(['hotelId' => $hotelId, 'nombre' => $hotels[$hotelId]['nombre'] ?? '']);
+    exit();
+}
+
+if ($uri === '/auth/logout' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+    pbhSetSessionCookie('', 0);
+    echo json_encode(['ok' => true]);
+    exit();
+}
+
+// ── /hotel-logo (por hotel) ──
+// GET: sirve config/hotels/<id>/hotel-logo.png (hotel de la sesión o de ?hotel=), con
+//   fallback al placeholder de assets/. POST: guarda el logo en la carpeta del hotel de
+//   la SESIÓN — exige estar autenticado. Vive en config/ para sobrevivir a redespliegues.
+if ($uri === '/hotel-logo') {
+    $base = getConfigDir();
+
+    if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+        $hotelId = getSessionHotelId($base);
+        if (!$hotelId) {
+            http_response_code(401);
+            echo json_encode(['error' => 'No autenticado']);
+            exit();
+        }
+        $image = (string)($data['image'] ?? '');
+        if (!preg_match('#^data:image/(png|jpeg);base64,(.+)$#', $image, $m)) {
+            http_response_code(400);
+            echo json_encode(['error' => 'Formato inválido: se espera data URL PNG/JPEG']);
+            exit();
+        }
+        $bytes = base64_decode($m[2], true);
+        if ($bytes === false || strlen($bytes) === 0 || strlen($bytes) > 3 * 1024 * 1024) {
+            http_response_code(400);
+            echo json_encode(['error' => 'Imagen vacía, corrupta o mayor de 3MB']);
+            exit();
+        }
+        $dir = resolveHotelDir($base, $hotelId, true);
+        if (file_put_contents($dir . '/hotel-logo.png', $bytes) === false) {
+            http_response_code(500);
+            echo json_encode(['error' => 'No se pudo guardar el logo (permisos de config/)']);
+            exit();
+        }
+        echo json_encode(['ok' => true]);
+        exit();
+    }
+
+    // GET
+    $customLogo = getReadConfigDir() . '/hotel-logo.png';
+    clearstatcache(true, $customLogo);
+    $file = file_exists($customLogo) ? $customLogo : __DIR__ . '/assets/hotel-logo.png';
+    if (!file_exists($file)) {
+        http_response_code(404);
+        echo json_encode(['error' => 'Logo no encontrado']);
+        exit();
+    }
+    header('Content-Type: image/png');
+    header('Cache-Control: no-cache');
+    header('Content-Length: ' . filesize($file));
+    readfile($file);
+    exit();
+}
+
 // ── /config GET ──
 if ($uri === '/config' && $_SERVER['REQUEST_METHOD'] === 'GET') {
     header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
@@ -315,13 +523,10 @@ if ($uri === '/config' && $_SERVER['REQUEST_METHOD'] === 'GET') {
     
     // Limpiar caché para asegurar lectura fresca del disco
     clearstatcache(true);
-    
-    $configDir = getConfigDir();
-    
-    // Obtener el código de evento del query string (para cargar precios específicos de cada evento)
-    $eventCode = $_GET['eventCode'] ?? '';
-    $eventCode = preg_replace('/^ev[-_]?/i', '', $eventCode);
-    
+
+    // Carpeta del hotel: sesión (panel) o ?hotel= (móvil); si no, global (compat).
+    $configDir = getReadConfigDir();
+
     $config = [
         'servidor'  => 'http://gestion.printboxweb.com',
         'evento'    => '', 'timer' => 5, 'impresora' => '', 'delay' => 5,
@@ -348,8 +553,8 @@ if ($uri === '/config' && $_SERVER['REQUEST_METHOD'] === 'GET') {
         }
     }
 
-    // Usar getTextosFile() para obtener el archivo correcto (específico de evento o global)
-    $textosFile = getTextosFile($configDir, $eventCode);
+    // textos.txt del hotel (precios/textos/empresa/email son por-hotel)
+    $textosFile = $configDir . '/textos.txt';
     if (file_exists($textosFile)) {
         $lines = file($textosFile, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
         
@@ -375,7 +580,7 @@ if ($uri === '/config' && $_SERVER['REQUEST_METHOD'] === 'GET') {
         }
     }
 
-    echo json_encode(['config' => $config, 'textos' => $textos]);
+    echo json_encode(['config' => $config, 'textos' => $textos, 'habitaciones' => readHabitaciones($configDir)]);
     exit();
 }
 
@@ -386,20 +591,30 @@ if ($uri === '/config' && $_SERVER['REQUEST_METHOD'] === 'POST') {
     header('Pragma: no-cache');
     header('Expires: 0');
     
-    $configDir = getConfigDir();
+    // Escribir config exige sesión; se guarda SIEMPRE en la carpeta del hotel de la sesión.
+    $base = getConfigDir();
+    $sessionHotelId = getSessionHotelId($base);
+    if (!$sessionHotelId) {
+        http_response_code(401);
+        echo json_encode(['error' => 'No autenticado']);
+        exit();
+    }
+    $configDir = resolveHotelDir($base, $sessionHotelId, true);
     if (!is_dir($configDir)) {
-        if (!mkdir($configDir, 0755, true)) {
-            http_response_code(500);
-            echo json_encode(['error' => 'No se pudo crear directorio config']);
-            exit();
-        }
+        http_response_code(500);
+        echo json_encode(['error' => 'No se pudo crear directorio del hotel']);
+        exit();
     }
 
-    // Obtener el código de evento del query string (para guardar precios específicos de cada evento)
-    $eventCode = $_GET['eventCode'] ?? '';
-    $eventCode = preg_replace('/^ev[-_]?/i', '', $eventCode);
-    
     $writeErrors = [];
+
+    if (isset($data['habitaciones'])) {
+        $ok = file_put_contents(
+            $configDir . '/habitaciones.json',
+            json_encode(sanitizeHabitaciones($data['habitaciones']), JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE)
+        );
+        if ($ok === false) $writeErrors[] = 'No se pudo escribir habitaciones.json';
+    }
 
     if (isset($data['config'])) {
         $c = $data['config'];
@@ -441,28 +656,9 @@ if ($uri === '/config' && $_SERVER['REQUEST_METHOD'] === 'POST') {
             'email_recepcion:' . $finalTextos['email_recepcion'],
         ]);
         
-        // Log para debuggear
-        @file_put_contents($configDir . '/debug.log', date('Y-m-d H:i:s') . " POST /config eventCode: " . $eventCode . " textos: " . json_encode($t) . "\n", FILE_APPEND);
-        
-        // IMPORTANTE: Cada evento debe tener precios INDEPENDIENTES
-        // Si hay eventCode → guardar SOLO en textos_<eventCode>.txt (aislado)
-        // Si NO hay eventCode → guardar en textos.txt (global/default)
-        // Esto evita que cambios en un evento afecten a otros eventos
-        $filesToWrite = [];
-        
-        if ($eventCode && trim($eventCode) !== '') {
-            // Guardar SOLO en archivo específico del evento
-            $filesToWrite[] = getTextosFile($configDir, $eventCode);
-        } else {
-            // Si no hay eventCode, guardar en global (defaults)
-            $filesToWrite[] = $configDir . '/textos.txt';
-        }
-        
-        // Escribir en el archivo correspondiente
-        foreach ($filesToWrite as $file) {
-            $success = file_put_contents($file, $content, LOCK_EX);
-            if ($success === false) $writeErrors[] = 'No se pudo escribir ' . basename($file);
-        }
+        // textos.txt del hotel (precios/textos/empresa/email son por-hotel)
+        $success = file_put_contents($configDir . '/textos.txt', $content, LOCK_EX);
+        if ($success === false) $writeErrors[] = 'No se pudo escribir textos.txt';
     }
 
     if (count($writeErrors) > 0) {
@@ -472,24 +668,26 @@ if ($uri === '/config' && $_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 
     // Limpiar caché de PHP antes de releer
-    $textosFile = getTextosFile($configDir, $eventCode);
+    $textosFile = $configDir . '/textos.txt';
     clearstatcache(true, $configDir . '/servidor_api.txt');
     clearstatcache(true, $textosFile);
 
     // Leer y devolver los valores actualizados inmediatamente
-    $config = ['servidor' => 'http://gestion.printboxweb.com', 'evento' => '', 'evento_printer' => '', 'timer' => 5, 'impresora' => '', 'delay' => 5];
+    $config = ['servidor' => 'http://gestion.printboxweb.com', 'evento' => '', 'evento_printer' => '', 'timer' => 5, 'impresora' => '', 'delay' => 5, 'servicio_disponible' => true];
     $textos = ['text_es' => '', 'text_en' => '', 'text_fr' => '', 'text_de' => '', 'precio1' => '', 'precio2' => '', 'precio3' => '', 'empresa' => '', 'email_recepcion' => ''];
 
     $apiFile = $configDir . '/servidor_api.txt';
     if (file_exists($apiFile)) {
         $lines = file($apiFile, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
         if ($lines) {
-            $keys = ['servidor', 'evento', 'evento_printer', 'timer', 'impresora', 'delay'];
+            $keys = ['servidor', 'evento', 'evento_printer', 'timer', 'impresora', 'delay', 'servicio_disponible'];
             foreach ($lines as $i => $line) {
                 if (!isset($keys[$i])) break;
                 $val = trim(strpos($line, ';') !== false ? explode(';', $line, 2)[1] : $line);
                 $key = $keys[$i];
-                if (in_array($key, ['timer', 'delay'])) {
+                if ($key === 'servicio_disponible') {
+                    $config[$key] = ($val !== '0');
+                } elseif (in_array($key, ['timer', 'delay'])) {
                     $config[$key] = (int) $val;
                 } else {
                     $config[$key] = $val;
@@ -498,7 +696,7 @@ if ($uri === '/config' && $_SERVER['REQUEST_METHOD'] === 'POST') {
         }
     }
 
-    $textosFile = getTextosFile($configDir, $eventCode);
+    $textosFile = $configDir . '/textos.txt';
     if (file_exists($textosFile)) {
         $lines = file($textosFile, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
         if ($lines) {
@@ -525,7 +723,7 @@ if ($uri === '/config' && $_SERVER['REQUEST_METHOD'] === 'POST') {
         }
     }
 
-    echo json_encode(['ok' => true, 'config' => $config, 'textos' => $textos]);
+    echo json_encode(['ok' => true, 'config' => $config, 'textos' => $textos, 'habitaciones' => readHabitaciones($configDir)]);
     exit();
 }
 
@@ -666,39 +864,18 @@ if (strpos($uri, '/printbox/') === 0) {
         $total = $data['total'] ?? '0';
         $paymentMethod = $data['paymentMethod'] ?? '';
 
-        $configDir = getConfigDir();
+        // El hotel llega en ?hotel= (lo añade el móvil desde el QR); el email de
+        // recepción se lee del textos.txt de ESE hotel.
+        $configDir = getReadConfigDir();
         $emailTo = getHotelReceptionEmail($configDir);
 
         if (!$emailTo) {
-            $debugFile = getTextosFile($configDir, '');
-            echo json_encode([
-                'ok' => true,
-                'skipped' => true,
-                'reason' => 'Sin email de recepción configurado para esta habitación',
-                'debug' => [
-                    'room' => $room,
-                    'configDir' => $configDir,
-                    'textosFile' => $debugFile,
-                    'fileExists' => file_exists($debugFile),
-                    'fileContent' => file_exists($debugFile) ? file_get_contents($debugFile) : null,
-                    'proxyMtime' => date('Y-m-d H:i:s', filemtime(__FILE__)),
-                ],
-            ]);
+            echo json_encode(['ok' => true, 'skipped' => true, 'reason' => 'Sin email de recepción configurado para este hotel']);
             exit();
         }
 
-        error_clear_last();
         $sent = sendRoomOrderEmail($emailTo, $room, $items, $total, $paymentMethod);
-        $lastError = error_get_last();
-        echo json_encode([
-            'ok' => (bool) $sent,
-            'debug' => [
-                'emailTo' => $emailTo,
-                'sendmail_from' => ini_get('sendmail_from'),
-                'sendmail_path' => ini_get('sendmail_path'),
-                'lastError' => $lastError,
-            ],
-        ]);
+        echo json_encode(['ok' => (bool) $sent]);
         exit();
     }
 }

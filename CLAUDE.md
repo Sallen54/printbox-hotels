@@ -8,7 +8,7 @@ Printbox Hotels es un sistema de envío/impresión de fotos por habitación para
 
 Este proyecto es una copia personalizada de **printbox-adventures** (carpeta hermana en `Proyectos/`), creada en julio 2026. Comparte toda la arquitectura técnica y el mismo backend Laravel externo; los cambios frente a Adventures son: sin Electron (nunca lo tuvo), terminología "habitación" en vez de "evento" de cara al usuario, paleta de colores propia, hueco de logo del hotel, y el endpoint nuevo `/printbox/notify-order` para el aviso a recepción.
 
-**Modelo de despliegue: una página por hotel.** Cada hotel tendrá su propio despliegue (carpeta IONOS con su `proxy.php` + `config/` propios) desde el que controla sus habitaciones; cada habitación sigue siendo un "evento" del Laravel compartido. Por eso los ajustes del `config/` del despliegue (p. ej. `servicio_disponible` en `servidor_api.txt`) son de ámbito **hotel**, no de habitación — eso es lo deseado, no un accidente. Primera instancia real: `https://vf.incomar.net/`.
+**Modelo de despliegue: multi-hotel con login (14 jul 2026).** Un mismo despliegue aloja **varios hoteles**, cada uno con **su sesión** (usuario+contraseña) y su carpeta `config/hotels/<hotelId>/` aislada. Las cuentas viven en `config/hotels.json` (bcrypt) y las crea Printbox con `scripts/add-hotel.js` (no hay auto-registro). La sesión es una **cookie `pbh_session` firmada con HMAC** (secreto en `config/session_secret.txt`), sin BD — ver `backend/lib/session.js` (dev) y los helpers `pbhMakeToken`/`pbhVerifyToken`/`getSessionHotelId`/`resolveHotelDir` en `proxy.php` (misma lógica en ambos). El **panel** (viewer/printer) resuelve el hotel por la **cookie**; el **móvil** (huésped, sin login) por **`?hotel=<id>`** del QR (`/mobile?hotel=X&habitacion=Y`). **Escribir config/logo exige sesión (401 si no)** y siempre en la carpeta del hotel de la cookie. Cada ajuste del `config/` del hotel (precios, textos, email, `servicio_disponible`) es de ámbito **hotel**, no de habitación. Cada habitación sigue siendo un "evento" del Laravel compartido. Instancia real: `https://vf.incomar.net/` (pendiente de migrar su `config/` global a `config/hotels/<id>/`).
 
 ## Comandos
 
@@ -48,7 +48,7 @@ Las tres llaman siempre a través de la única capa de API compartida [src/share
 Como el hosting compartido de IONOS no tiene runtime de Node, existen **dos implementaciones independientes de la misma superficie de API** que hay que mantener sincronizadas cuando cambias comportamiento:
 
 - **[backend/server.js](backend/server.js) + [backend/routes/](backend/routes/)** — Express, usado solo en desarrollo local (puerto 4000).
-- **[proxy.php](proxy.php)** — un único fichero PHP que reimplementa las mismas rutas para el despliegue en producción de IONOS, ya que Apache no puede ejecutar Express. [.htaccess](.htaccess) reescribe `/health`, `/config`, `/print/*`, `/printbox/*`, `/proxy-image/*` hacia `proxy.php`.
+- **[proxy.php](proxy.php)** — un único fichero PHP que reimplementa las mismas rutas para el despliegue en producción de IONOS, ya que Apache no puede ejecutar Express. [.htaccess](.htaccess) reescribe `/health`, `/config`, `/hotel-logo`, `/print/*`, `/printbox/*`, `/proxy-image/*` hacia `proxy.php`.
 
 **Si cambias el comportamiento de una ruta en `backend/routes/*.js`, casi siempre necesitas hacer el cambio equivalente en `proxy.php`, y viceversa** — no se generan uno del otro, se mantienen en paralelo a mano. `npm run build` copia `proxy.php` y `.htaccess` tal cual dentro de `dist/`, no compila nada.
 
@@ -84,12 +84,19 @@ Pieza nueva frente a Adventures. Se dispara **una vez por pedido completo** (no 
 
 ### Ficheros de configuración: delimitados por punto y coma/dos puntos, sensibles a posición y a clave
 
-La configuración vive en `config/servidor_api.txt` / `config/textos.txt`, leída/escrita por [backend/routes/config.js](backend/routes/config.js) y reflejada en `proxy.php`:
+La config de cada hotel vive en **`config/hotels/<hotelId>/`** (`servidor_api.txt`, `textos.txt`, `habitaciones.json`, `hotel-logo.png`), leída/escrita por [backend/routes/config.js](backend/routes/config.js) y reflejada en `proxy.php`. La carpeta se resuelve con `resolveHotelDir(base, hotelId)`: en el panel `hotelId` sale de la cookie de sesión (`getSessionHotelId`), en el móvil del query `?hotel=`. Sin `hotelId` cae a `config/` global (compat con el modelo antiguo / QRs viejos). Además: `config/hotels.json` (cuentas bcrypt) y `config/session_secret.txt` (secreto HMAC), ambos **denegados por HTTP** vía `config/.htaccess`.
 
 - `servidor_api.txt` — líneas `clave;valor`, **parseadas posicionalmente por número de línea** (servidor, evento, evento_printer, timer, impresora, delay, servicio_disponible) — no reordenes las líneas.
-- `textos.txt` — líneas `clave:valor` (textos es/en/fr/de, precio1/2/3, empresa, **email_recepcion**), parseadas por nombre de clave. **Ámbito hotel**: precios, textos y email se configuran una vez en el Admin y valen para todas las habitaciones del despliegue. `proxy.php` conserva el mecanismo por-evento de Adventures (`getTextosFile($configDir, $eventCode)` → `textos_<código>.txt` cuando llega `?eventCode=`), pero el frontend de Hotels ya **no** pasa `eventCode` a `/config` — no reintroduzcas ese parámetro sin motivo.
-- Los códigos de habitación se normalizan quitando un prefijo `ev-`/`ev_` antes de usarse (ver `normalizeEventCode()` en api.js).
-- Si añades un nuevo campo de configuración (como se hizo con `email_recepcion`), tócalo en **cuatro** sitios: `backend/routes/config.js` (GET y POST), `proxy.php` (GET y POST, además del array `$validKeys` en ambos), y el formulario de Admin en `ViewerApp.jsx`.
+- `textos.txt` — líneas `clave:valor` (textos es/en/fr/de, precio1/2/3, empresa, **email_recepcion**), parseadas por nombre de clave. Ámbito **hotel**: se configuran una vez en el Admin. (Ya no hay `?eventCode=` ni `textos_<código>.txt` — se eliminó el mecanismo por-evento de Adventures; no lo reintroduzcas.)
+- `habitaciones.json` — habitaciones registradas `[{ nombre, codigo }]` (codigo sin `ev-`). Viajan por el mismo `GET/POST /config` (campo `habitaciones`); las gestionan el asistente inicial y el Admin del Viewer.
+- `hotel-logo.png` — subido desde el navegador vía `POST /hotel-logo` (exige sesión; se guarda en la carpeta del hotel). `GET /hotel-logo` (cookie o `?hotel=`) lo sirve con fallback al placeholder `assets/hotel-logo.png`; las apps usan `hotelLogoUrl(hotelId)` de api.js, no la ruta estática.
+- **Escribir `/config` y `POST /hotel-logo` exige sesión** (401 si no); el backend ignora cualquier hotel del query para escribir y usa siempre el de la cookie. `GET` sí acepta `?hotel=` (móvil).
+- Los códigos de habitación se normalizan quitando `ev-`/`ev_` antes de usarse (ver `normalizeEventCode()` en api.js).
+- **Al añadir un campo de config nuevo tócalo en los DOS backends** (`backend/routes/config.js` GET+POST y `proxy.php` GET+POST) y en el Admin de `ViewerApp.jsx`. Igual para cualquier endpoint nuevo: implementación paralela en Express y `proxy.php` **+ regla en `.htaccess`**.
+
+### Autenticación
+
+Login por hotel con cookie firmada HMAC (sin BD). Helpers compartidos en [backend/lib/session.js](backend/lib/session.js) (dev) y replicados en `proxy.php` (prod). Rutas: `POST /auth/login` (verifica bcrypt contra `hotels.json`), `GET /auth/me`, `POST /auth/logout`. El frontend usa `login`/`getMe`/`logout` de api.js; **toda petición autenticada lleva `credentials:'include'`** (constante `CREDS`) — necesario porque en dev el panel (:3000) y el backend (:4000) son cross-origin. Cuentas creadas con `scripts/add-hotel.js` (bcryptjs; los hashes los acepta también `password_verify()` de PHP). No existe ya la contraseña de Admin `admin123`: el candado es la sesión.
 
 ### Pagos
 

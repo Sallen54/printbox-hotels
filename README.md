@@ -26,13 +26,35 @@ Sistema de envío e impresión de fotos por habitación para hoteles, hostales y
 
 ## 1. Descripción general
 
-Cada habitación tiene un **QR** (pegado en la propia habitación) que abre la app móvil directamente sobre la galería de fotos de esa habitación. El huésped:
+**Varios hoteles conviven en el mismo despliegue**, cada uno con **su propia cuenta/sesión** (usuario+contraseña que le da Printbox). Al entrar en `/viewer` cada hotel inicia sesión y ve solo lo suyo (habitaciones, precios, logo, email). Cada habitación tiene un **QR** (pegado en la propia habitación) que abre la app móvil. El huésped:
 
-1. Escanea el QR → entra directo a la galería de su habitación (sin escribir ningún código).
-2. Sube fotos que ya tiene guardadas en el móvil, hace fotos nuevas con la cámara, o elige entre las que ya haya en la habitación.
+1. Escanea el QR → entra directo a la pantalla de su habitación (sin escribir ningún código).
+2. Sube fotos que ya tiene guardadas en el móvil o hace fotos nuevas con la cámara (no ve las fotos de otros).
 3. Paga (tarjeta vía Square o PayPal) o las sube gratis desde la cámara.
 4. **Recepción recibe un e-mail automático** con miniaturas de las fotos, número de copias y el resumen de lo pagado.
 5. Recepción imprime las fotos (con el mismo "Panel de Control"/Printer que ya usa Adventures) y se las entrega al huésped.
+
+### Alta de un hotel (lo hace Printbox)
+
+Las cuentas **las crea Printbox** (no hay auto-registro), con el script local `scripts/add-hotel.js`, y se suben por FTP a `config/` (ver §14):
+
+```bash
+node scripts/add-hotel.js --id marbella --nombre "Hotel Marbella" --user recepcion --pass "claveSegura"
+node scripts/add-hotel.js --list                          # ver hoteles
+node scripts/add-hotel.js --id marbella --pass "nueva"    # resetear contraseña
+```
+
+Esto añade la cuenta a `config/hotels.json` (contraseña cifrada con bcrypt) y crea `config/hotels/marbella/`.
+
+### Puesta en marcha de un hotel (tutorial)
+
+El hotel abre `/viewer`, **inicia sesión** con el usuario/contraseña que le dio Printbox, y la primera vez aparece un **asistente de 3 pasos**:
+
+1. **Nombre del hotel** — se muestra en la cabecera del monitor y en los avisos.
+2. **Logo del hotel** — se sube desde el navegador (PNG/JPG, se ajusta solo); aparece en el monitor, en la app del huésped y como sello en cada foto. Se puede omitir y subir después.
+3. **Habitaciones** — cada habitación con su **código `ev-` proporcionado por Printbox**.
+
+Al terminar, el monitor queda funcionando. Desde **Admin** (⚙) pueden después: cambiar nombre/logo, añadir/quitar habitaciones, **ver e imprimir el QR de cada habitación**, elegir qué habitación muestra el monitor, y configurar precios, e-mail de recepción y el interruptor de "servicio disponible". Botón **Salir** para cerrar sesión. El QR de cada habitación es `/mobile?hotel=<id>&habitacion=<código>` (lleva el hotel para que el móvil cargue sus precios/logo).
 
 ### Interfaces web (desplegadas en IONOS)
 
@@ -110,7 +132,13 @@ npm run build
 ```
 Sube por FTP a la raíz del subdominio: todo `dist/` (ya incluye `proxy.php`, `.htaccess`, `config/` copiados automáticamente por `scripts/copy-dist-assets.js`).
 
-> ⚠️ No sobreescribir `config/` si ya tiene datos configurados (precios, email de recepción, etc. del hotel).
+> ⚠️ **No sobreescribir `config/`** si ya tiene datos (cuentas, secreto de sesión, config de los hoteles). Sube solo los `assets/`, `index.html`, `proxy.php` y `.htaccess` — nunca la carpeta `config/` entera.
+>
+> ⚠️ **La primera vez**, sube manualmente `config/.htaccess` (deniega el acceso HTTP a las cuentas y la config). Y sube el `config/hotels.json` y las carpetas `config/hotels/<id>/` que hayas generado en local con `add-hotel.js`.
+
+**Alta de hoteles (Printbox):** el hosting IONOS no tiene Node, así que las cuentas se crean **en local** con `node scripts/add-hotel.js ...` (§1) y luego se suben por FTP los ficheros resultantes (`config/hotels.json` y `config/hotels/<id>/`).
+
+**Migrar el hotel actual de `vf.incomar.net`** (que hoy tiene su config en el `config/` global): (1) crea su cuenta con `add-hotel.js`; (2) por FTP, mueve `servidor_api.txt`, `textos.txt`, `habitaciones.json` y `hotel-logo.png` del `config/` global a `config/hotels/<id>/`; (3) reimprime los QR con `?hotel=<id>`. Mientras no se migre, el sitio sigue leyendo el `config/` global (fallback de compatibilidad).
 
 Ver también `guia_ionos.txt` para la guía genérica paso a paso de FTP.
 
@@ -206,18 +234,36 @@ No hay forma sencilla de enviar e-mail real sin credenciales SMTP en local, así
 > **Desarrollo:** `config/` en la raíz del proyecto.
 > **Producción:** `config/` en la raíz del subdominio en IONOS (mismo sitio que `proxy.php`).
 
-### `config/servidor_api.txt`
+Estructura multi-hotel:
+
 ```
-servidor;https://gestion.printboxweb.com
+config/
+  .htaccess               # "Require all denied": nada de config/ se sirve por HTTP
+  hotels.json             # cuentas: { "<hotelId>": { user, passHash(bcrypt), nombre } }
+  session_secret.txt      # secreto HMAC de sesión (se genera solo la 1ª vez)
+  hotels/
+    <hotelId>/            # una carpeta por hotel
+      servidor_api.txt
+      textos.txt
+      habitaciones.json
+      hotel-logo.png
+```
+
+Cada hotel se resuelve por la **sesión** (panel) o por **`?hotel=<id>`** (móvil). Si no hay `hotelId`, se lee el `config/` global (compat con el modelo antiguo de un solo hotel).
+
+### `config/hotels/<id>/servidor_api.txt`
+```
+servidor;http://gestion.printboxweb.com
 evento;
 evento_printer;
 timer;5
 impresora;-IMPRESORA-
 delay;5
+servicio_disponible;1
 ```
 > ⚠️ Orden exacto — no cambiar posición de líneas (se parsea por número de línea).
 
-### `config/textos.txt`
+### `config/hotels/<id>/textos.txt`
 ```
 es:¡Consigue tu foto de la habitación!
 en:Get your room photo!
@@ -226,10 +272,25 @@ de:Hol dir dein Foto!
 precio1:5
 precio2:9
 precio3:12
-empresa:Printbox Hotels
+empresa:Hotel Ejemplo
 email_recepcion:recepcion@tuhotel.com
 ```
-**Precios, textos y email de recepción son únicos por hotel** (cada hotel = un despliegue con su propia carpeta `config/`), se configuran una sola vez en el Admin del Monitor y valen para todas las habitaciones. `proxy.php` conserva el soporte de archivos por-evento (`textos_<código>.txt`, herencia de Adventures) por compatibilidad, pero la app de Hotels ya no los escribe ni los lee.
+Precios, textos y email son **por hotel**; se configuran en el Admin del Monitor y valen para todas las habitaciones de ese hotel.
+
+### `config/hotels/<id>/habitaciones.json`
+```json
+[
+  { "nombre": "Suite 101", "codigo": "6926957" },
+  { "nombre": "Doble 102", "codigo": "6926958" }
+]
+```
+Habitaciones registradas (asistente inicial / Admin), código **sin** prefijo `ev-`. Viajan por el mismo `GET/POST /config`.
+
+### `config/hotels/<id>/hotel-logo.png`
+Logo subido desde el navegador (`POST /hotel-logo`, requiere sesión). Si no existe, `GET /hotel-logo` sirve el placeholder de `assets/`.
+
+### `config/hotels.json` (cuentas) y `config/session_secret.txt`
+Los gestiona `scripts/add-hotel.js` y el backend; **nunca** editar a mano `session_secret.txt`. Ambos quedan fuera del alcance HTTP por `config/.htaccess`.
 
 ---
 
@@ -237,7 +298,7 @@ email_recepcion:recepcion@tuhotel.com
 
 - **App Móvil / Printer**: tema oscuro con acento dorado, paleta centralizada en `src/styles/global.css` (variables `--pb-bg`, `--pb-bg-alt`, `--pb-accent`, `--pb-text`) — cambiar esos valores re-tematiza ambas apps.
 - **Monitor (`/viewer`)**: tema claro/crema inspirado en la maqueta del hotel (cabecera crema de 3 columnas: idioma ES/EN a la izquierda, logo del hotel al centro, idioma FR/DE a la derecha; botones de acción en pastillas; galería sobre fondo oliva oscuro; footer oscuro con precios). Variables propias en `src/viewer/Viewer.css` (`--vw-cream`, `--vw-body-bg`, `--vw-footer-bg`, `--vw-text-dark`), independientes de las de Mobile/Printer.
-- **Logo del hotel**: un único archivo, `src/public/assets/hotel-logo.png`, se reutiliza en tres sitios — cabecera de la app móvil, centro de la cabecera del Monitor, y como badge circular superpuesto en cada foto de la galería del Monitor (ver `.viewer-photo-badge` en `Viewer.css`). Sustituir ese archivo por el logo real del hotel actualiza los tres sitios a la vez. Recomendado: PNG cuadrado, fondo transparente u opaco simple (el badge lo recorta en un círculo).
+- **Logo del hotel**: se sube **desde el navegador** (asistente inicial o Admin del Monitor) — no hace falta FTP. Se guarda en `config/hotel-logo.png` del servidor (sobrevive a redespliegues) y lo sirve `GET /hotel-logo` con fallback al placeholder `src/public/assets/hotel-logo.png`. Se reutiliza en tres sitios: cabecera de la app móvil, centro de la cabecera del Monitor (con el nombre del hotel debajo), y como badge circular en cada foto de la galería del Monitor (`.viewer-photo-badge` en `Viewer.css`). Recomendado: imagen cuadrada, fondo transparente u opaco simple (el badge la recorta en un círculo).
 - Los modales (Admin, código de habitación, impresión, cupones) siguen con el tema oscuro heredado de Adventures — no había referencia visual para ellos y cambiarlos no formaba parte del encargo.
 
 ---

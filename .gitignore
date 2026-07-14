@@ -6,3 +6,10 @@ PBAcount.txt
 *.log
 config/paypal.json
 .claude/settings.local.json
+
+# Secretos y datos reales de los hoteles (se generan con scripts/add-hotel.js y se
+# suben por FTP; nunca al repo): cuentas con hash bcrypt, secreto de sesión HMAC y
+# la config/logos de cada hotel.
+config/hotels.json
+config/session_secret.txt
+config/hotels/

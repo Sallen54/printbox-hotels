@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react'
-import { findEvent, getPhotosToPrint, getConfig, saveConfig, getPrinters, getPrintCount } from '../shared/api'
+import { findEvent, getPhotosToPrint, getConfig, saveConfig, getPrinters, getPrintCount, getMe } from '../shared/api'
 import { useInterval } from '../shared/hooks/useInterval'
 import './Printer.css'
 
@@ -32,6 +32,7 @@ export default function PrinterApp() {
     empresa: ''
   })
   const [printers, setPrinters] = useState([])      // Lista de impresoras disponibles
+  const [noSession, setNoSession] = useState(false) // No hay sesión de hotel iniciada en el Monitor
   const [editing, setEditing] = useState(false)     // Modo edición de configuración
   const [showEventModal, setShowEventModal] = useState(false)  // Modal para cambiar evento
   const [eventInput, setEventInput] = useState('')   // Input del código de evento
@@ -85,14 +86,20 @@ export default function PrinterApp() {
    * Cargar configuración inicial y datos guardados
    */
   useEffect(() => {
-    getConfig().then(d => {
-      if (d.config) {
-        setConfig(d.config)
-        checkPrinterStatus(d.config.impresora)
-      }
-      if (d.textos) setTextos(d.textos)
-    }).catch(() => {})
-    getPrintCount().then(setPrintCount).catch(() => {})
+    // El Printer comparte la cookie de sesión del Monitor (mismo navegador de recepción).
+    // Sin sesión no hay hotel del que leer config → avisar de que hay que entrar en el Monitor.
+    getMe().then(me => {
+      setNoSession(!me)
+      if (!me) return
+      getConfig().then(d => {
+        if (d.config) {
+          setConfig(d.config)
+          checkPrinterStatus(d.config.impresora)
+        }
+        if (d.textos) setTextos(d.textos)
+      }).catch(() => {})
+      getPrintCount().then(setPrintCount).catch(() => {})
+    }).catch(() => setNoSession(true))
   }, [])
 
   /**
@@ -410,6 +417,22 @@ export default function PrinterApp() {
     success: 'log-success',
     warn: 'log-warn',
     error: 'log-error'
+  }
+
+  if (noSession) {
+    return (
+      <div className="printer-app d-flex flex-column vh-100 bg-dark text-light align-items-center justify-content-center text-center p-4">
+        <i className="bi bi-box-arrow-in-right text-warning" style={{ fontSize: 48 }} />
+        <h4 className="mt-3">Inicia sesión en el Monitor</h4>
+        <p className="text-secondary" style={{ maxWidth: 420 }}>
+          Esta impresora usa la sesión del hotel abierta en el Monitor (<span className="font-mono">/viewer</span>) de este mismo equipo.
+          Abre el Monitor, entra con las credenciales del hotel y vuelve a cargar esta página.
+        </p>
+        <button className="btn btn-warning text-dark fw-bold mt-2" onClick={() => window.location.reload()}>
+          <i className="bi bi-arrow-repeat me-2" />Reintentar
+        </button>
+      </div>
+    )
   }
 
   return (

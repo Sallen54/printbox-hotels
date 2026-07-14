@@ -1,0 +1,8 @@
+# Nada dentro de config/ debe servirse por HTTP: aquí viven las cuentas de hotel
+# (hotels.json con hashes), el secreto de sesión (session_secret.txt), y la config,
+# logos y textos de TODOS los hoteles. proxy.php los lee/escribe por filesystem.
+Require all denied
+<IfModule !mod_authz_core.c>
+    Order allow,deny
+    Deny from all
+</IfModule>

@@ -3,16 +3,47 @@ const router = express.Router()
 const path = require('path')
 const fs = require('fs-extra')
 const os = require('os')
+const { getSessionHotelId, resolveHotelDir } = require('../lib/session')
 
-function getConfigDir(req) {
+function getBaseConfigDir(req) {
   const dataDir = req.app.locals.dataDir ||
     path.join(os.homedir(), 'AppData', 'Local', 'PrintboxHotels')
   return path.join(dataDir, 'config')
 }
 
+// Carpeta de config para LECTURA: hotel de la sesión (panel) o del query ?hotel= (móvil);
+// sin ninguno, carpeta global (compat con el modelo antiguo de un solo hotel).
+function getReadConfigDir(req) {
+  const base = getBaseConfigDir(req)
+  const hotelId = getSessionHotelId(req, base) || req.query.hotel
+  return resolveHotelDir(base, hotelId)
+}
+
+// Habitaciones registradas del hotel: [{ nombre, codigo }] en config/habitaciones.json.
+// codigo se guarda normalizado (sin prefijo ev-).
+function readHabitaciones(configDir) {
+  try {
+    const file = path.join(configDir, 'habitaciones.json')
+    if (!fs.existsSync(file)) return []
+    const parsed = JSON.parse(fs.readFileSync(file, 'utf8'))
+    return Array.isArray(parsed) ? parsed : []
+  } catch { return [] }
+}
+
+function sanitizeHabitaciones(input) {
+  if (!Array.isArray(input)) return []
+  return input
+    .map(h => ({
+      nombre: String(h?.nombre ?? '').replace(/[\r\n\t]/g, ' ').trim().slice(0, 40),
+      codigo: String(h?.codigo ?? '').trim().replace(/^ev[-_]?/i, '').replace(/[^0-9a-zA-Z_-]/g, ''),
+    }))
+    .filter(h => h.codigo)
+    .slice(0, 500)
+}
+
 router.get('/', (req, res) => {
   try {
-    const CONFIG_DIR = getConfigDir(req)
+    const CONFIG_DIR = getReadConfigDir(req)
     const apiFile = path.join(CONFIG_DIR, 'servidor_api.txt')
     const textosFile = path.join(CONFIG_DIR, 'textos.txt')
 
@@ -55,7 +86,7 @@ router.get('/', (req, res) => {
       })
     }
 
-    res.json({ config, textos })
+    res.json({ config, textos, habitaciones: readHabitaciones(CONFIG_DIR) })
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
@@ -63,9 +94,19 @@ router.get('/', (req, res) => {
 
 router.post('/', (req, res) => {
   try {
-    const CONFIG_DIR = getConfigDir(req)
+    const base = getBaseConfigDir(req)
+    const hotelId = getSessionHotelId(req, base)
+    if (!hotelId) return res.status(401).json({ error: 'No autenticado' })
+    const CONFIG_DIR = resolveHotelDir(base, hotelId, { create: true })
     fs.ensureDirSync(CONFIG_DIR)
-    const { config, textos } = req.body
+    const { config, textos, habitaciones } = req.body
+
+    if (habitaciones !== undefined) {
+      fs.writeFileSync(
+        path.join(CONFIG_DIR, 'habitaciones.json'),
+        JSON.stringify(sanitizeHabitaciones(habitaciones), null, 2)
+      )
+    }
 
     if (config) {
       const lines = [
@@ -119,7 +160,7 @@ router.post('/', (req, res) => {
       })
     }
 
-    res.json({ ok: true, config, textos: textosResponse })
+    res.json({ ok: true, config, textos: textosResponse, habitaciones: readHabitaciones(CONFIG_DIR) })
   } catch (err) {
     res.status(500).json({ error: err.message })
   }

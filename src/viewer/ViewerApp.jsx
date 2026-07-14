@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react'
 import { QRCodeSVG } from 'qrcode.react'
-import { findEvent, getEventPhotos, printJob, saveConfig, getConfig, sendPhoto, processPayment } from '../shared/api'
+import { findEvent, getEventPhotos, printJob, saveConfig, getConfig, getPrintCount, sendPhoto, processPayment, hotelLogoUrl, uploadHotelLogo, saveHabitaciones, login, logout, getMe } from '../shared/api'
 import { useInterval } from '../shared/hooks/useInterval'
 import './Viewer.css'
 
@@ -38,19 +38,21 @@ export default function ViewerApp() {
   const [lastPage, setLastPage] = useState(1)
   const [printCount, setPrintCount] = useState(0)
   const [error, setError] = useState(null)
-  const [showQR, setShowQR] = useState(false)
   const [autoplay, setAutoplay] = useState(false)
   const [loading, setLoading] = useState(false)
 
+  // Sesión de hotel: undefined = comprobando, null = mostrar login, { hotelId, nombre } = dentro
+  const [session, setSession] = useState(undefined)
+  const [loginUser, setLoginUser] = useState('')
+  const [loginPass, setLoginPass] = useState('')
+  const [loginError, setLoginError] = useState('')
+  const [loginLoading, setLoginLoading] = useState(false)
+
   // Modales
   const [showEventModal, setShowEventModal] = useState(false)
-  const [eventInput, setEventInput] = useState('')
   const [eventError, setEventError] = useState('')
-  const inputRef = useRef(null)
 
   // Admin
-  const [showAdminModal, setShowAdminModal] = useState(false)
-  const [adminPassword, setAdminPassword] = useState('')
   const [adminError, setAdminError] = useState('')
   const [adminEventCode, setAdminEventCode] = useState('')
   const [adminPrinterEventCode, setAdminPrinterEventCode] = useState('')
@@ -59,6 +61,25 @@ export default function ViewerApp() {
   const [adminPrice3, setAdminPrice3] = useState('')
   const [adminEmailRecepcion, setAdminEmailRecepcion] = useState('')
   const [adminServicioDisponible, setAdminServicioDisponible] = useState(true)
+  const [adminHotelName, setAdminHotelName] = useState('')
+  const [adminRooms, setAdminRooms] = useState([])
+  const [adminLogoData, setAdminLogoData] = useState(null) // dataURL PNG pendiente de subir
+  const [adminSaving, setAdminSaving] = useState(false)
+
+  // Habitaciones registradas del hotel [{ nombre, codigo }] y logo dinámico
+  const [habitaciones, setHabitaciones] = useState([])
+  const [logoVersion, setLogoVersion] = useState(0)
+  const logoSrc = `${hotelLogoUrl()}?v=${logoVersion}`
+  const [qrRoom, setQrRoom] = useState(null) // { nombre, codigo } | null — modal de QR
+
+  // Asistente de primera configuración (nombre del hotel → logo → habitaciones)
+  const [showSetupWizard, setShowSetupWizard] = useState(false)
+  const [wizardStep, setWizardStep] = useState(1)
+  const [wizardName, setWizardName] = useState('')
+  const [wizardLogoData, setWizardLogoData] = useState(null)
+  const [wizardRooms, setWizardRooms] = useState([{ nombre: '', codigo: '' }])
+  const [wizardError, setWizardError] = useState('')
+  const [wizardSaving, setWizardSaving] = useState(false)
 
   const [showPrivacyModal, setShowPrivacyModal] = useState(false)
   const [privacyContent, setPrivacyContent] = useState('')
@@ -93,7 +114,7 @@ export default function ViewerApp() {
   const [discountAmount, setDiscountAmount] = useState(0)
 
   // ============================================
-  // LOCALSTORAGE
+  // LOCALSTORAGE (solo caché de pintado; la fuente de verdad es el servidor por sesión)
   // ============================================
   const saveViewerState = () => {
     try {
@@ -101,64 +122,86 @@ export default function ViewerApp() {
       localStorage.setItem('printbox_viewer_state', JSON.stringify(data))
     } catch (e) { console.error(e) }
   }
-  const loadViewerState = () => {
-    try {
-      const saved = localStorage.getItem('printbox_viewer_state')
-      if (!saved) return null
-      const parsed = JSON.parse(saved)
-      if (parsed.config) setConfig(parsed.config)
-      if (parsed.textos) setTextos(parsed.textos)
-      if (parsed.currentPage) setCurrentPage(parsed.currentPage)
-      if (parsed.lastPage) setLastPage(parsed.lastPage)
-      if (parsed.printCount) setPrintCount(parsed.printCount)
-      if (parsed.config?.evento) setShowEventModal(false)
-      return parsed
-    } catch (e) { return null }
-  }
 
   // ============================================
-  // INICIALIZACIÓN
+  // INICIALIZACIÓN (tras autenticar) — toda la config viene del hotel de la sesión
   // ============================================
-  useEffect(() => {
-    const saved = loadViewerState()
-    // Config global del hotel: precios/email/textos son por-hotel, no por-habitación
-    const configUrl = BACKEND === '/' ? '/config' : `${BACKEND}/config`
-    Promise.all([
-      fetch(configUrl).then(r => r.json()),
-      fetch(BACKEND === '/' ? '/print/count' : `${BACKEND}/print/count`).then(r => r.json()).catch(() => ({ count: 0 })),
-    ]).then(([d, c]) => {
+  const init = useCallback(async () => {
+    try {
+      const [d, count] = await Promise.all([
+        getConfig(),                 // hotel resuelto por la cookie de sesión
+        getPrintCount().catch(() => 0),
+      ])
+      const cfg = d.config || {}
       const mergedConfig = {
-        servidor: d.config?.servidor || 'http://gestion.printboxweb.com',
-        timer: d.config?.timer || 5,
-        impresora: d.config?.impresora || '',
-        delay: d.config?.delay || 5,
-        evento: saved?.config?.evento || '',
-        evento_printer: saved?.config?.evento_printer || '',
+        servidor: cfg.servidor || 'http://gestion.printboxweb.com',
+        timer: cfg.timer || 5,
+        impresora: cfg.impresora || '',
+        delay: cfg.delay || 5,
+        evento: cfg.evento || '',
+        evento_printer: cfg.evento_printer || '',
+        servicio_disponible: cfg.servicio_disponible !== false,
       }
       const mergedTextos = {
-        precio1: '5', precio2: '9', precio3: '12', empresa: 'Printbox Hotels',
-        ...(saved?.textos || {}),
+        precio1: '5', precio2: '9', precio3: '12', empresa: '',
         ...(d.textos || {}),
       }
       setConfig(mergedConfig)
       setTextos(mergedTextos)
-      setPrintCount(c.count || 0)
-      if (!mergedConfig.evento) setShowEventModal(true)
-      else setShowEventModal(false)
-    }).catch(() => { if (!saved?.config?.evento) setShowEventModal(true) })
+      setHabitaciones(d.habitaciones || [])
+      setPrintCount(count || 0)
+      setError(null)
+      if (!mergedConfig.evento) {
+        if ((d.habitaciones || []).length) {
+          setShowEventModal(true)           // habitaciones registradas pero ninguna elegida
+        } else {
+          const empresa = mergedTextos.empresa || ''
+          setWizardName(empresa && empresa !== 'Printbox Hotels' ? empresa : '')
+          setShowSetupWizard(true)          // hotel sin configurar → asistente
+        }
+      } else setShowEventModal(false)
+    } catch (e) {
+      setError('No se pudo cargar la configuración: ' + (e?.message || e))
+    }
   }, [])
 
-  useEffect(() => { if (showEventModal) setTimeout(() => inputRef.current?.focus(), 50) }, [showEventModal])
+  // Comprobar sesión al arrancar; si hay, inicializar
+  useEffect(() => {
+    getMe().then(me => {
+      if (me) { setSession(me); init() }
+      else setSession(null)
+    }).catch(() => setSession(null))
+  }, [init])
+
+  async function handleLogin(e) {
+    e?.preventDefault?.()
+    if (!loginUser.trim() || !loginPass) { setLoginError('Introduce usuario y contraseña'); return }
+    setLoginLoading(true); setLoginError('')
+    try {
+      const me = await login(loginUser.trim(), loginPass)
+      setSession(me); setLoginPass('')
+      await init()
+    } catch (err) { setLoginError(err.message) }
+    finally { setLoginLoading(false) }
+  }
+
+  async function handleLogout() {
+    await logout()
+    setSession(null)
+    setConfig(null); setTextos(null); setUuid(null); setHabitaciones([]); setAllPhotos([])
+    setShowAdminConfig(false); setShowEventModal(false); setShowSetupWizard(false)
+    localStorage.removeItem('printbox_viewer_state')
+  }
+
   useEffect(() => { fetch('/assets/terms_and_conditions_2.html').then(r=>r.text()).then(setPrivacyContent).catch(()=>setPrivacyContent(defaultPrivacyContent)) }, [])
-  useEffect(() => { saveViewerState() }, [config, textos, currentPage, lastPage, printCount])
+  useEffect(() => { if (session) saveViewerState() }, [config, textos, currentPage, lastPage, printCount, session])
 
   // ============================================
   // EVENTO Y ADMIN
   // ============================================
-  async function handleEventConfirm() {
-    const code = eventInput.trim()
-    if (!code) { setEventError('Introduce el número de habitación'); return }
-    const fullCode = `ev-${code}`
+  // Cambiar la habitación que muestra el Monitor (de entre las registradas)
+  async function handleSelectRoom(codigo) {
+    const fullCode = `ev-${codigo}`
     setEventError('')
     setShowEventModal(false)
     const newConfig = { ...config, evento: fullCode }
@@ -166,12 +209,93 @@ export default function ViewerApp() {
     await saveConfig(newConfig, textos).catch(() => {})
   }
 
-  async function handleAdminLogin() {
-    if (adminPassword !== 'admin123') { setAdminError('Contraseña incorrecta'); return }
+  // Lee un archivo de imagen y lo devuelve como dataURL PNG cuadrado-máx 512px
+  // (así el POST /hotel-logo recibe siempre un PNG pequeño, venga el archivo que venga)
+  function readLogoFile(file) {
+    return new Promise((resolve, reject) => {
+      if (!file) return reject(new Error('Sin archivo'))
+      if (!/^image\//.test(file.type)) return reject(new Error('El archivo debe ser una imagen'))
+      const reader = new FileReader()
+      reader.onload = () => {
+        const img = new Image()
+        img.onload = () => {
+          const canvas = document.createElement('canvas')
+          const ratio = Math.min(512 / img.width, 512 / img.height, 1)
+          canvas.width = Math.max(1, Math.round(img.width * ratio))
+          canvas.height = Math.max(1, Math.round(img.height * ratio))
+          canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height)
+          resolve(canvas.toDataURL('image/png'))
+        }
+        img.onerror = () => reject(new Error('No se pudo leer la imagen'))
+        img.src = reader.result
+      }
+      reader.onerror = () => reject(new Error('No se pudo leer el archivo'))
+      reader.readAsDataURL(file)
+    })
+  }
+
+  // Editor de lista de habitaciones (compartido entre asistente y Admin)
+  const updateRoomList = (setter) => ({
+    add: () => setter(prev => [...prev, { nombre: '', codigo: '' }]),
+    remove: (idx) => setter(prev => prev.filter((_, i) => i !== idx)),
+    set: (idx, field, value) => setter(prev => prev.map((r, i) => i === idx ? { ...r, [field]: field === 'codigo' ? value.replace(/\D/g, '') : value } : r)),
+  })
+  const wizardRoomsEditor = updateRoomList(setWizardRooms)
+  const adminRoomsEditor = updateRoomList(setAdminRooms)
+
+  const validRooms = (rooms) => rooms
+    .map(r => ({ nombre: r.nombre.trim(), codigo: r.codigo.trim() }))
+    .filter(r => r.codigo)
+
+  // ============================================
+  // ASISTENTE DE PRIMERA CONFIGURACIÓN
+  // ============================================
+  async function handleWizardFinish() {
+    const rooms = validRooms(wizardRooms)
+    if (!rooms.length) { setWizardError('Añade al menos una habitación con su código'); return }
+    setWizardError('')
+    setWizardSaving(true)
+    try {
+      if (wizardLogoData) {
+        await uploadHotelLogo(wizardLogoData)
+        setLogoVersion(Date.now())
+      }
+      await saveHabitaciones(rooms)
+      const newConfig = { ...config, evento: `ev-${rooms[0].codigo}` }
+      const newTextos = {
+        text_es: textos?.text_es || '¡Consigue tu foto de la habitación!',
+        text_en: textos?.text_en || 'Get your room photo!',
+        text_fr: textos?.text_fr || 'Obtenez votre photo!',
+        text_de: textos?.text_de || 'Hol dir dein Foto!',
+        precio1: textos?.precio1 || '5',
+        precio2: textos?.precio2 || '9',
+        precio3: textos?.precio3 || '12',
+        empresa: wizardName.trim() || 'Printbox Hotels',
+        email_recepcion: textos?.email_recepcion || '',
+      }
+      const saveResult = await saveConfig(newConfig, newTextos)
+      if (saveResult.textos) setTextos(saveResult.textos)
+      setConfig(newConfig)
+      setHabitaciones(rooms)
+      setShowSetupWizard(false)
+      setWizardStep(1)
+    } catch (e) {
+      setWizardError('Error guardando: ' + e.message)
+    } finally {
+      setWizardSaving(false)
+    }
+  }
+
+  // ============================================
+  // ADMIN
+  // ============================================
+  // El acceso ya está protegido por la sesión de hotel; el Admin abre directo.
+  function openAdmin() {
     setAdminError('')
-    setAdminPassword('')
-    setShowAdminModal(false)
     setShowAdminConfig(true)
+    setAdminHotelName(textos?.empresa && textos.empresa !== 'Printbox Hotels' ? textos.empresa : (textos?.empresa || ''))
+    setAdminRooms(habitaciones.length ? habitaciones.map(h => ({ ...h })) : [{ nombre: '', codigo: '' }])
+    setAdminLogoData(null)
     setAdminEventCode(config?.evento?.replace('ev-', '') || '')
     setAdminPrinterEventCode(config?.evento_printer?.replace('ev-', '') || '')
     setAdminPrice1(textos?.precio1 || '5')
@@ -182,28 +306,42 @@ export default function ViewerApp() {
   }
 
   async function handleSaveAdminConfig() {
-    const newConfig = { ...config, evento: `ev-${adminEventCode}`, evento_printer: `ev-${adminPrinterEventCode}`, servicio_disponible: adminServicioDisponible }
+    const rooms = validRooms(adminRooms)
+    if (!rooms.length) { setAdminError('Añade al menos una habitación con su código'); return }
+    // La habitación monitorizada debe ser una de las registradas
+    const monitorCode = rooms.some(r => r.codigo === adminEventCode) ? adminEventCode : rooms[0].codigo
+    const newConfig = { ...config, evento: `ev-${monitorCode}`, evento_printer: adminPrinterEventCode ? `ev-${adminPrinterEventCode}` : '', servicio_disponible: adminServicioDisponible }
     const newTextos = {
-      text_es: textos?.text_es || '¡Consigue tu foto del evento!',
-      text_en: textos?.text_en || 'Get your event photo!',
+      text_es: textos?.text_es || '¡Consigue tu foto de la habitación!',
+      text_en: textos?.text_en || 'Get your room photo!',
       text_fr: textos?.text_fr || 'Obtenez votre photo!',
       text_de: textos?.text_de || 'Hol dir dein Foto!',
       precio1: adminPrice1?.trim() || textos?.precio1 || '5',
       precio2: adminPrice2?.trim() || textos?.precio2 || '9',
       precio3: adminPrice3?.trim() || textos?.precio3 || '12',
-      empresa: textos?.empresa || 'Printbox Hotels',
-      email_recepcion: adminEmailRecepcion?.trim() || textos?.email_recepcion || '',
+      empresa: adminHotelName.trim() || textos?.empresa || 'Printbox Hotels',
+      email_recepcion: adminEmailRecepcion?.trim() || '',
     }
     setAdminError('')
+    setAdminSaving(true)
     try {
+      if (adminLogoData) {
+        await uploadHotelLogo(adminLogoData)
+        setLogoVersion(Date.now())
+      }
+      await saveHabitaciones(rooms)
       // Sin eventCode: los textos/precios/email se guardan en el textos.txt global del hotel
       const saveResult = await saveConfig(newConfig, newTextos)
       if (saveResult.textos) { setTextos(saveResult.textos); localStorage.removeItem('printbox_viewer_state') }
       if (saveResult.config) setConfig(saveResult.config)
+      setHabitaciones(rooms)
       setAdminError('✓ Configuración guardada correctamente')
-    } catch (e) { setAdminError('Error guardando configuración: ' + e.message) }
-    if (config?.evento !== newConfig.evento) findEvent(newConfig.evento).then(setUuid).catch(e => setError(`No se pudo conectar: ${e.message}`))
-    setTimeout(() => { setShowAdminConfig(false); setAdminEventCode(''); setAdminPrinterEventCode(''); setAdminPrice1(''); setAdminPrice2(''); setAdminPrice3(''); setAdminEmailRecepcion('') }, 1500)
+      setTimeout(() => { setShowAdminConfig(false); setAdminError(''); setAdminLogoData(null) }, 1200)
+    } catch (e) {
+      setAdminError('Error guardando configuración: ' + e.message)
+    } finally {
+      setAdminSaving(false)
+    }
   }
 
   // ============================================
@@ -405,46 +543,126 @@ export default function ViewerApp() {
   // ============================================
   // RENDER
   // ============================================
+  // Comprobando sesión (primer render)
+  if (session === undefined) {
+    return (
+      <div className="viewer-app d-flex flex-column align-items-center justify-content-center bg-dark text-light" style={{ height: '100vh' }}>
+        <span className="spinner-border text-warning" style={{ width: '3rem', height: '3rem' }} />
+      </div>
+    )
+  }
+
+  // Sin sesión → pantalla de login del hotel
+  if (session === null) {
+    return (
+      <div className="viewer-app d-flex flex-column align-items-center justify-content-center bg-dark text-light" style={{ height: '100vh', padding: '1rem' }}>
+        <div className="card bg-black border-secondary" style={{ maxWidth: 380, width: '100%' }}>
+          <form className="card-body p-4 p-md-5 text-center" onSubmit={handleLogin}>
+            <img src={hotelLogoUrl()} alt="Printbox Hotels" style={{ width: 72, height: 72, objectFit: 'contain', marginBottom: '1rem' }} />
+            <h4 className="text-light mb-1">Acceso del hotel</h4>
+            <p className="text-secondary mb-4" style={{ fontSize: 13 }}>Introduce las credenciales que te ha dado Printbox</p>
+            <div className="mb-2 text-start">
+              <label className="form-label text-light" style={{ fontSize: 13 }}>Usuario</label>
+              <input className="form-control bg-dark border-secondary text-light" value={loginUser} onChange={e => { setLoginUser(e.target.value); setLoginError('') }} autoFocus autoComplete="username" />
+            </div>
+            <div className="mb-3 text-start">
+              <label className="form-label text-light" style={{ fontSize: 13 }}>Contraseña</label>
+              <input type="password" className="form-control bg-dark border-secondary text-light" value={loginPass} onChange={e => { setLoginPass(e.target.value); setLoginError('') }} autoComplete="current-password" />
+            </div>
+            {loginError && <div className="alert alert-danger py-2 mb-3" style={{ fontSize: 13 }}>{loginError}</div>}
+            <button type="submit" className="btn btn-warning text-dark fw-bold w-100" disabled={loginLoading}>
+              {loginLoading ? <><span className="spinner-border spinner-border-sm me-2" />Entrando…</> : <><i className="bi bi-box-arrow-in-right me-2" />Entrar</>}
+            </button>
+          </form>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className="viewer-app d-flex flex-column bg-dark text-light" style={{ height: "100vh", overflow: "hidden" }}>
-      {/* Modales de evento, admin, etc. (sin cambios estructurales) */}
-      {showEventModal && (
+      {/* Asistente de primera configuración: nombre del hotel → logo → habitaciones */}
+      {showSetupWizard && (
         <div className="modal d-block event-modal-overlay" tabIndex="-1">
-          <div className="modal-dialog modal-dialog-centered">
+          <div className="modal-dialog modal-dialog-centered modal-lg">
             <div className="modal-content bg-dark border border-secondary event-modal">
-              <div className="modal-body text-center p-4 p-md-5">
-                <img src="/assets/hotel-logo.png" alt="Logo" className="event-modal-logo" />
-                <h4 className="event-modal-title">Introduce el número de habitación</h4>
-                <p className="event-modal-subtitle">Para ver y gestionar las fotos de esta habitación</p>
-                <div className="input-group mb-2 event-modal-input-group">
-                  <span className="input-group-text bg-black border-secondary text-warning fw-bold font-mono fs-5">Hab.</span>
-                  <input ref={inputRef} type="text" inputMode="numeric" className={`form-control bg-black border-secondary text-light font-mono fw-bold event-modal-input ${eventError ? 'is-invalid' : ''}`} value={eventInput} onChange={e => setEventInput(e.target.value.replace(/\D/g, ''))} onKeyDown={e => { if (e.key === 'Enter') handleEventConfirm() }} />
-                  {eventError && <div className="invalid-feedback text-start">{eventError}</div>}
-                </div>
-                <button className="btn btn-warning text-dark fw-bold w-100 mt-3 event-modal-button" onClick={handleEventConfirm}><i className="bi bi-arrow-right-circle me-2" /> Cargar habitación</button>
+              <div className="modal-header border-secondary">
+                <h5 className="modal-title text-light"><i className="bi bi-stars me-2 text-warning" />Configura tu hotel</h5>
+                <span className="ms-auto text-secondary font-mono" style={{ fontSize: '13px' }}>Paso {wizardStep} de 3</span>
+              </div>
+              <div className="modal-body p-4">
+                {wizardStep === 1 && (
+                  <>
+                    <h6 className="text-warning mb-1"><i className="bi bi-building me-2" />Nombre del hotel</h6>
+                    <p className="text-secondary" style={{ fontSize: '13px' }}>Aparecerá en la pantalla del monitor y en los avisos a recepción.</p>
+                    <input className="form-control form-control-lg bg-black border-secondary text-light" placeholder="Hotel Ejemplo" value={wizardName} onChange={e => setWizardName(e.target.value)} onKeyDown={e => { if (e.key === 'Enter' && wizardName.trim()) { setWizardError(''); setWizardStep(2) } }} autoFocus />
+                  </>
+                )}
+                {wizardStep === 2 && (
+                  <>
+                    <h6 className="text-warning mb-1"><i className="bi bi-image me-2" />Logo del hotel</h6>
+                    <p className="text-secondary" style={{ fontSize: '13px' }}>Se mostrará en la cabecera del monitor, en la app del huésped y como sello en cada foto. Puedes omitirlo y subirlo más tarde desde Admin.</p>
+                    <div className="d-flex align-items-center gap-3">
+                      <img src={wizardLogoData || logoSrc} alt="Logo" style={{ width: 90, height: 90, objectFit: 'contain', background: '#000', borderRadius: 12, border: '1px solid var(--bs-secondary)' }} />
+                      <div className="flex-grow-1">
+                        <input type="file" accept="image/*" className="form-control bg-black border-secondary text-light" onChange={async e => { const f = e.target.files?.[0]; e.target.value = ''; if (!f) return; try { setWizardLogoData(await readLogoFile(f)); setWizardError('') } catch (err) { setWizardError(err.message) } }} />
+                        <div className="form-text text-secondary">PNG o JPG — se ajusta solo a 512px.</div>
+                      </div>
+                    </div>
+                  </>
+                )}
+                {wizardStep === 3 && (
+                  <>
+                    <h6 className="text-warning mb-1"><i className="bi bi-door-open me-2" />Habitaciones del hotel</h6>
+                    <p className="text-secondary" style={{ fontSize: '13px' }}>Añade cada habitación con el código <b>ev-</b> que te hemos proporcionado. Podrás añadir o quitar habitaciones más adelante desde Admin.</p>
+                    <div style={{ maxHeight: '38vh', overflowY: 'auto' }}>
+                      {wizardRooms.map((r, i) => (
+                        <div key={i} className="d-flex gap-2 mb-2 align-items-center">
+                          <input className="form-control bg-black border-secondary text-light" placeholder={`Habitación ${i + 1}`} value={r.nombre} onChange={e => wizardRoomsEditor.set(i, 'nombre', e.target.value)} style={{ maxWidth: '42%' }} />
+                          <div className="input-group">
+                            <span className="input-group-text bg-black border-secondary text-warning fw-bold font-mono">ev-</span>
+                            <input className="form-control bg-black border-secondary text-light font-mono" inputMode="numeric" placeholder="000000" value={r.codigo} onChange={e => wizardRoomsEditor.set(i, 'codigo', e.target.value)} />
+                          </div>
+                          <button className="btn btn-sm btn-outline-danger" onClick={() => wizardRoomsEditor.remove(i)} disabled={wizardRooms.length === 1} title="Quitar"><i className="bi bi-trash" /></button>
+                        </div>
+                      ))}
+                    </div>
+                    <button className="btn btn-sm btn-outline-warning mt-1" onClick={wizardRoomsEditor.add}><i className="bi bi-plus-circle me-1" />Añadir habitación</button>
+                  </>
+                )}
+                {wizardError && <div className="alert alert-danger py-2 mt-3 mb-0">{wizardError}</div>}
+              </div>
+              <div className="modal-footer border-secondary">
+                {wizardStep > 1 && <button className="btn btn-secondary me-auto" onClick={() => { setWizardError(''); setWizardStep(s => s - 1) }} disabled={wizardSaving}><i className="bi bi-arrow-left me-1" />Atrás</button>}
+                {wizardStep === 1 && <button className="btn btn-warning text-dark fw-bold" onClick={() => { if (!wizardName.trim()) { setWizardError('Escribe el nombre del hotel'); return } setWizardError(''); setWizardStep(2) }}>Siguiente<i className="bi bi-arrow-right ms-1" /></button>}
+                {wizardStep === 2 && <button className="btn btn-warning text-dark fw-bold" onClick={() => { setWizardError(''); setWizardStep(3) }}>{wizardLogoData ? 'Siguiente' : 'Omitir por ahora'}<i className="bi bi-arrow-right ms-1" /></button>}
+                {wizardStep === 3 && <button className="btn btn-warning text-dark fw-bold" onClick={handleWizardFinish} disabled={wizardSaving}>{wizardSaving ? <><span className="spinner-border spinner-border-sm me-2" />Guardando…</> : <>Terminar<i className="bi bi-check-circle ms-1" /></>}</button>}
               </div>
             </div>
           </div>
         </div>
       )}
 
-      {showAdminModal && (
+      {/* Selector de habitación a monitorizar (entre las registradas del hotel) */}
+      {showEventModal && !showSetupWizard && (
         <div className="modal d-block event-modal-overlay" tabIndex="-1">
           <div className="modal-dialog modal-dialog-centered">
             <div className="modal-content bg-dark border border-secondary event-modal">
-              <div className="modal-header border-secondary justify-content-between align-items-center">
-                <h5 className="modal-title text-light mb-0">Panel de Administración</h5>
-                <button type="button" className="btn-close btn-close-white" onClick={() => { setShowAdminModal(false); setAdminPassword(''); setAdminError('') }} aria-label="Cerrar" />
-              </div>
               <div className="modal-body text-center p-4 p-md-5">
-                <img src="/assets/hotel-logo.png" alt="Logo" className="event-modal-logo" />
-                <p className="event-modal-subtitle">Introduce la contraseña</p>
-                <div className="input-group mb-2 event-modal-input-group">
-                  <span className="input-group-text bg-black border-secondary text-warning fw-bold font-mono fs-5"><i className="bi bi-lock"></i></span>
-                  <input type="password" className={`form-control bg-black border-secondary text-light font-mono fw-bold event-modal-input ${adminError ? 'is-invalid' : ''}`} placeholder="Contraseña" value={adminPassword} onChange={e => { setAdminPassword(e.target.value); setAdminError('') }} onKeyDown={e => { if (e.key === 'Enter') handleAdminLogin() }} />
-                  {adminError && <div className="invalid-feedback text-start">{adminError}</div>}
+                <img src={logoSrc} alt="Logo" className="event-modal-logo" />
+                <h4 className="event-modal-title">Elige la habitación</h4>
+                <p className="event-modal-subtitle">El monitor mostrará las fotos de esa habitación</p>
+                <div style={{ maxHeight: '42vh', overflowY: 'auto' }}>
+                  {habitaciones.map(h => (
+                    <button key={h.codigo} className={`btn w-100 mb-2 d-flex justify-content-between align-items-center ${config?.evento === `ev-${h.codigo}` ? 'btn-warning text-dark fw-bold' : 'btn-outline-light'}`} onClick={() => handleSelectRoom(h.codigo)}>
+                      <span><i className="bi bi-door-open me-2" />{h.nombre || 'Habitación'}</span>
+                      <span className="font-mono" style={{ fontSize: '12px' }}>ev-{h.codigo}</span>
+                    </button>
+                  ))}
                 </div>
-                <button className="btn btn-warning text-dark fw-bold w-100 mt-3 event-modal-button" onClick={handleAdminLogin}><i className="bi bi-arrow-right-circle me-2" /> Acceder</button>
+                {eventError && <div className="text-danger mt-2" style={{ fontSize: '13px' }}>{eventError}</div>}
+                <p className="text-secondary mt-2 mb-0" style={{ fontSize: '12px' }}>¿Falta alguna habitación? Añádela desde <b>Admin</b>.</p>
+                {config?.evento && <button className="btn btn-secondary btn-sm mt-3" onClick={() => setShowEventModal(false)}>Cancelar</button>}
               </div>
             </div>
           </div>
@@ -456,13 +674,44 @@ export default function ViewerApp() {
           <div className="modal-dialog modal-dialog-centered modal-lg">
             <div className="modal-content bg-dark border border-secondary event-modal">
               <div className="modal-header border-secondary"><h5 className="modal-title text-light">Configuración del Hotel</h5><button type="button" className="btn-close btn-close-white" onClick={() => setShowAdminConfig(false)} /></div>
-              <div className="modal-body p-4">
+              <div className="modal-body p-4" style={{ maxHeight: '70vh', overflowY: 'auto' }}>
                 <div className="row g-3">
-                  <div className="col-md-6"><label className="form-label text-light">Número de Habitación (Monitor)</label><div className="input-group"><span className="input-group-text bg-black border-secondary text-warning fw-bold font-mono">ev-</span><input type="text" inputMode="numeric" className="form-control bg-black border-secondary text-light font-mono" value={adminEventCode} onChange={e => setAdminEventCode(e.target.value.replace(/\D/g, ''))} /></div></div>
-                  <div className="col-md-6"><label className="form-label text-light">Número de Habitación (Impresora)</label><div className="input-group"><span className="input-group-text bg-black border-secondary text-warning fw-bold font-mono">ev-</span><input type="text" inputMode="numeric" className="form-control bg-black border-secondary text-light font-mono" value={adminPrinterEventCode} onChange={e => setAdminPrinterEventCode(e.target.value.replace(/\D/g, ''))} /></div></div>
-                  <div className="col-md-4"><label className="form-label text-light">Precio 1 Foto (€)</label><input type="number" step="0.01" className="form-control bg-black border-secondary text-light" value={adminPrice1} onChange={e => setAdminPrice1(e.target.value)} /></div>
-                  <div className="col-md-4"><label className="form-label text-light">Precio 2 Fotos (€)</label><input type="number" step="0.01" className="form-control bg-black border-secondary text-light" value={adminPrice2} onChange={e => setAdminPrice2(e.target.value)} /></div>
-                  <div className="col-md-4"><label className="form-label text-light">Precio 3+ Fotos (€)</label><input type="number" step="0.01" className="form-control bg-black border-secondary text-light" value={adminPrice3} onChange={e => setAdminPrice3(e.target.value)} /></div>
+                  <div className="col-md-7">
+                    <label className="form-label text-light">Nombre del hotel</label>
+                    <input className="form-control bg-black border-secondary text-light" placeholder="Hotel Ejemplo" value={adminHotelName} onChange={e => setAdminHotelName(e.target.value)} />
+                  </div>
+                  <div className="col-md-5">
+                    <label className="form-label text-light">Logo del hotel</label>
+                    <div className="d-flex align-items-center gap-2">
+                      <img src={adminLogoData || logoSrc} alt="Logo" style={{ width: 46, height: 46, objectFit: 'contain', background: '#000', borderRadius: 8, border: '1px solid var(--bs-secondary)' }} />
+                      <input type="file" accept="image/*" className="form-control bg-black border-secondary text-light" onChange={async e => { const f = e.target.files?.[0]; e.target.value = ''; if (!f) return; try { setAdminLogoData(await readLogoFile(f)); setAdminError('') } catch (err) { setAdminError(err.message) } }} />
+                    </div>
+                  </div>
+
+                  <div className="col-12">
+                    <label className="form-label text-light mb-1">Habitaciones del hotel</label>
+                    <div className="form-text text-secondary mt-0 mb-2">Cada habitación con su código <b>ev-</b> proporcionado por Printbox. <i className="bi bi-qr-code" /> muestra el QR para imprimirlo y ponerlo en la habitación; <i className="bi bi-display" /> la elige como la que muestra este monitor.</div>
+                    <div style={{ maxHeight: '30vh', overflowY: 'auto' }}>
+                      {adminRooms.map((r, i) => (
+                        <div key={i} className="d-flex gap-2 mb-2 align-items-center">
+                          <input className="form-control form-control-sm bg-black border-secondary text-light" placeholder={`Habitación ${i + 1}`} value={r.nombre} onChange={e => adminRoomsEditor.set(i, 'nombre', e.target.value)} style={{ maxWidth: '34%' }} />
+                          <div className="input-group input-group-sm" style={{ maxWidth: '38%' }}>
+                            <span className="input-group-text bg-black border-secondary text-warning fw-bold font-mono">ev-</span>
+                            <input className="form-control bg-black border-secondary text-light font-mono" inputMode="numeric" placeholder="000000" value={r.codigo} onChange={e => adminRoomsEditor.set(i, 'codigo', e.target.value)} />
+                          </div>
+                          <button className="btn btn-sm btn-outline-light" title="Ver QR de esta habitación" onClick={() => setQrRoom({ nombre: r.nombre, codigo: r.codigo })} disabled={!r.codigo}><i className="bi bi-qr-code" /></button>
+                          <button className={`btn btn-sm ${adminEventCode === r.codigo && r.codigo ? 'btn-warning text-dark' : 'btn-outline-secondary'}`} title="Mostrar esta habitación en el monitor" onClick={() => r.codigo && setAdminEventCode(r.codigo)} disabled={!r.codigo}><i className="bi bi-display" /></button>
+                          <button className="btn btn-sm btn-outline-danger" title="Quitar" onClick={() => adminRoomsEditor.remove(i)} disabled={adminRooms.length === 1}><i className="bi bi-trash" /></button>
+                        </div>
+                      ))}
+                    </div>
+                    <button className="btn btn-sm btn-outline-warning" onClick={adminRoomsEditor.add}><i className="bi bi-plus-circle me-1" />Añadir habitación</button>
+                  </div>
+
+                  <div className="col-md-6"><label className="form-label text-light">Evento de impresión (Impresora)</label><div className="input-group"><span className="input-group-text bg-black border-secondary text-warning fw-bold font-mono">ev-</span><input type="text" inputMode="numeric" className="form-control bg-black border-secondary text-light font-mono" value={adminPrinterEventCode} onChange={e => setAdminPrinterEventCode(e.target.value.replace(/\D/g, ''))} /></div><div className="form-text text-secondary">Opcional: si se rellena, las fotos pagadas se envían a este evento (el que vigila la app Printer) en vez de al de cada habitación.</div></div>
+                  <div className="col-md-2"><label className="form-label text-light">1 Foto (€)</label><input type="number" step="0.01" className="form-control bg-black border-secondary text-light" value={adminPrice1} onChange={e => setAdminPrice1(e.target.value)} /></div>
+                  <div className="col-md-2"><label className="form-label text-light">2 Fotos (€)</label><input type="number" step="0.01" className="form-control bg-black border-secondary text-light" value={adminPrice2} onChange={e => setAdminPrice2(e.target.value)} /></div>
+                  <div className="col-md-2"><label className="form-label text-light">3+ Fotos (€)</label><input type="number" step="0.01" className="form-control bg-black border-secondary text-light" value={adminPrice3} onChange={e => setAdminPrice3(e.target.value)} /></div>
                   <div className="col-md-12"><label className="form-label text-light">Email de Recepción</label><input type="email" placeholder="recepcion@tuhotel.com" className="form-control bg-black border-secondary text-light" value={adminEmailRecepcion} onChange={e => setAdminEmailRecepcion(e.target.value)} /><div className="form-text text-secondary">Vale para todo el hotel: a esta dirección se enviará un aviso con miniaturas y copias cada vez que cualquier habitación envíe fotos. Los precios también son únicos para todas las habitaciones.</div></div>
                   <div className="col-md-12">
                     <div className="bg-black border border-secondary rounded-3 p-3">
@@ -470,15 +719,15 @@ export default function ViewerApp() {
                         <input className="form-check-input" type="checkbox" role="switch" id="servicioDisponibleSwitch" checked={adminServicioDisponible} onChange={e => setAdminServicioDisponible(e.target.checked)} />
                         <label className="form-check-label text-light fw-bold" htmlFor="servicioDisponibleSwitch">Servicio disponible para los huéspedes</label>
                       </div>
-                      <div className="form-text text-secondary">Afecta a <strong>todo el hotel</strong>, no solo a esta habitación. Si se desactiva, cualquier huésped que escanee un QR verá el aviso de "servicio no disponible" en 4 idiomas en lugar de poder pedir fotos.</div>
+                      <div className="form-text text-secondary">Afecta a <strong>todo el hotel</strong>. Si se desactiva, cualquier huésped que escanee un QR verá el aviso de "servicio no disponible" en 4 idiomas en lugar de poder pedir fotos.</div>
                     </div>
                   </div>
                 </div>
               </div>
               <div className="modal-footer border-secondary">
                 <button type="button" className="btn btn-outline-success me-auto" onClick={() => { setShowAdminConfig(false); setShowCouponPanel(true); loadCouponList() }}><i className="bi bi-ticket-perforated me-1" />Cupones</button>
-                <button type="button" className="btn btn-secondary" onClick={() => setShowAdminConfig(false)}>Cancelar</button>
-                <button type="button" className="btn btn-warning text-dark" onClick={handleSaveAdminConfig}>Guardar</button>
+                <button type="button" className="btn btn-secondary" onClick={() => setShowAdminConfig(false)} disabled={adminSaving}>Cancelar</button>
+                <button type="button" className="btn btn-warning text-dark" onClick={handleSaveAdminConfig} disabled={adminSaving}>{adminSaving ? <><span className="spinner-border spinner-border-sm me-2" />Guardando…</> : 'Guardar'}</button>
               </div>
             </div>
           </div>
@@ -623,7 +872,8 @@ export default function ViewerApp() {
             </div>
           </div>
           <div className="viewer-header-brand-center">
-            <img src="/assets/hotel-logo.png" alt="Logo del hotel" className="header-logo-center" />
+            <img src={logoSrc} alt="Logo del hotel" className="header-logo-center" />
+            {textos?.empresa && <div className="header-hotel-name">{textos.empresa}</div>}
           </div>
           <div className="viewer-header-lang-block viewer-header-lang-block-right">
             <div className="viewer-header-lang-text text-end">
@@ -639,27 +889,30 @@ export default function ViewerApp() {
               {config?.servicio_disponible === false && (
                 <span className="badge service-disabled-badge"><i className="bi bi-exclamation-triangle-fill me-1" />Servicio desactivado para los huéspedes</span>
               )}
+              <button className="btn btn-sm header-action-btn" onClick={() => setShowEventModal(true)} title="Cambiar la habitación que muestra el monitor"><i className="bi bi-door-open me-1" />{(() => { const code = (config?.evento || '').replace(/^ev-/, ''); const r = habitaciones.find(h => h.codigo === code); return r?.nombre || (code ? `Hab. ${code}` : 'Habitación') })()}</button>
               <button className={`btn btn-sm header-action-btn ${autoplay ? 'header-action-btn-active' : ''}`} onClick={() => setAutoplay(!autoplay)} title={autoplay ? 'Detener autoplay' : 'Iniciar autoplay (15s por página)'}><i className={`bi ${autoplay ? 'bi-pause-circle-fill' : 'bi-play-circle-fill'} me-1`} />{autoplay ? 'Autoplay ON' : 'Autoplay'}</button>
-              <button className="btn btn-sm header-action-btn" onClick={() => setShowQR(!showQR)} title="Mostrar QR"><i className="bi bi-qr-code me-1" />{showQR ? 'Ocultar QR' : 'Ver QR'}</button>
+              <button className="btn btn-sm header-action-btn" onClick={() => { const code = (config?.evento || '').replace(/^ev-/, ''); const r = habitaciones.find(h => h.codigo === code); setQrRoom(r || { nombre: '', codigo: code }) }} title="Mostrar QR de la habitación actual"><i className="bi bi-qr-code me-1" />Ver QR</button>
               <button className="btn btn-sm header-action-btn" onClick={() => setShowPrivacyModal(true)}><i className="bi bi-info-circle me-1" /> Términos</button>
-              <button className="btn btn-sm header-action-btn" onClick={() => setShowAdminModal(true)}><i className="bi bi-gear me-1" /> Admin</button>
+              <button className="btn btn-sm header-action-btn" onClick={openAdmin}><i className="bi bi-gear me-1" /> Admin</button>
+              <button className="btn btn-sm header-action-btn" onClick={handleLogout} title={`Sesión: ${session?.nombre || session?.hotelId || ''}`}><i className="bi bi-box-arrow-right me-1" /> Salir</button>
               <button className="btn btn-sm header-action-btn" onClick={() => loadAllPhotos(currentPage)} disabled={loading}><i className={`bi ${loading ? 'bi-hourglass-split spin' : 'bi-arrow-repeat'} me-1`} />{loading ? 'Cargando...' : 'Actualizar'}</button>
             </div>
           </div>
         )}
         {error && <div className="alert alert-danger viewer-error-alert">{error}</div>}
       </header>
-      {showQR && uuid && (
-        <div className="modal d-block" style={{ backgroundColor: 'rgba(0,0,0,0.7)' }} tabIndex="-1">
-          <div className="modal-dialog modal-dialog-centered">
+      {qrRoom && (
+        <div className="modal d-block" style={{ backgroundColor: 'rgba(0,0,0,0.7)', zIndex: 1080 }} tabIndex="-1" onClick={() => setQrRoom(null)}>
+          <div className="modal-dialog modal-dialog-centered" onClick={e => e.stopPropagation()}>
             <div className="modal-content bg-dark border border-secondary">
               <div className="modal-body text-center p-5">
-                <h5 className="text-light mb-4">Escanea para acceder a tu habitación</h5>
+                <h5 className="text-light mb-1">{qrRoom.nombre || 'Habitación'}</h5>
+                <p className="text-secondary font-mono mb-4" style={{ fontSize: '12px' }}>ev-{qrRoom.codigo}</p>
                 <div style={{ display: 'flex', justifyContent: 'center', backgroundColor: 'white', padding: '15px', borderRadius: '8px' }}>
-                  <QRCodeSVG value={`${window.location.origin}/mobile?habitacion=${(config?.evento || 'ev-' + uuid).replace(/^ev-/, '')}`} size={300} level="H" includeMargin={true} />
+                  <QRCodeSVG value={`${window.location.origin}/mobile?hotel=${encodeURIComponent(session?.hotelId || '')}&habitacion=${qrRoom.codigo}`} size={300} level="H" includeMargin={true} />
                 </div>
-                <p className="text-warning mt-3 mb-0"><small>Escanea el código QR para comprar tus fotos</small></p>
-                <button className="btn btn-secondary mt-3" onClick={() => setShowQR(false)}><i className="bi bi-x me-1" /> Cerrar</button>
+                <p className="text-warning mt-3 mb-0"><small>Imprime este código y colócalo en la habitación — al escanearlo, el huésped sube sus fotos</small></p>
+                <button className="btn btn-secondary mt-3" onClick={() => setQrRoom(null)}><i className="bi bi-x me-1" /> Cerrar</button>
               </div>
             </div>
           </div>
@@ -667,14 +920,14 @@ export default function ViewerApp() {
       )}
       <main className="viewer-gallery">
         {!uuid ? (
-          <div className="viewer-gallery-empty"><img src="/assets/hotel-logo.png" alt="Printbox Hotels" className="empty-logo" /><h2 className="empty-title">Printbox Hotels</h2><p className="empty-text">Introduce la habitación para ver las fotos</p></div>
+          <div className="viewer-gallery-empty"><img src={logoSrc} alt="Logo" className="empty-logo" /><h2 className="empty-title">{textos?.empresa || 'Printbox Hotels'}</h2><p className="empty-text">Elige la habitación para ver las fotos</p></div>
         ) : loading ? (
-          <div className="viewer-gallery-empty"><img src="/assets/hotel-logo.png" alt="Printbox Hotels" className="empty-logo" /><h2 className="empty-title">Printbox Hotels</h2><p className="empty-text">Cargando fotos…</p></div>
+          <div className="viewer-gallery-empty"><img src={logoSrc} alt="Logo" className="empty-logo" /><h2 className="empty-title">{textos?.empresa || 'Printbox Hotels'}</h2><p className="empty-text">Cargando fotos…</p></div>
         ) : allPhotos.length === 0 ? (
-          <div className="viewer-gallery-empty"><img src="/assets/hotel-logo.png" alt="Printbox Hotels" className="empty-logo" /><h2 className="empty-title">Printbox Hotels</h2><p className="empty-text">Esperando fotos…</p></div>
+          <div className="viewer-gallery-empty"><img src={logoSrc} alt="Logo" className="empty-logo" /><h2 className="empty-title">{textos?.empresa || 'Printbox Hotels'}</h2><p className="empty-text">Esperando fotos…</p></div>
         ) : (
           <div className="viewer-gallery-grid">
-            {allPhotos.map(photo => <PhotoCard key={photo.id || photo.uri} photo={photo} onSelect={handleSelectPhoto} />)}
+            {allPhotos.map(photo => <PhotoCard key={photo.id || photo.uri} photo={photo} onSelect={handleSelectPhoto} logoSrc={logoSrc} />)}
           </div>
         )}
       </main>
@@ -700,7 +953,7 @@ export default function ViewerApp() {
   )
 }
 
-function PhotoCard({ photo, onSelect }) {
+function PhotoCard({ photo, onSelect, logoSrc = '/assets/hotel-logo.png' }) {
   const thumb = fixImageUrl(photo.uri || photo.uri_full)
   const [imageError, setImageError] = React.useState(false)
   const [retryCount, setRetryCount] = React.useState(0)
@@ -716,7 +969,7 @@ function PhotoCard({ photo, onSelect }) {
         <img key={`${thumb}-${retryCount}`} src={thumb} alt="" className="w-100 h-100" style={{ objectFit: 'cover' }} loading="lazy" draggable={false} onContextMenu={e=>e.preventDefault()} onDragStart={e=>e.preventDefault()} onError={handleImageError} />
       }
       <div className="viewer-photo-hint"><i className="bi bi-printer me-1" /> Imprimir</div>
-      <img src="/assets/hotel-logo.png" alt="" className="viewer-photo-badge" draggable={false} />
+      <img src={logoSrc} alt="" className="viewer-photo-badge" draggable={false} />
     </button>
   )
 }

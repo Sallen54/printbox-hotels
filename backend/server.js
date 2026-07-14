@@ -7,6 +7,8 @@ const fetch = require('node-fetch')
 const printRoutes = require('./routes/print')
 const configRoutes = require('./routes/config')
 const printboxRoutes = require('./routes/printbox')
+const authRoutes = require('./routes/auth')
+const { getSessionHotelId, resolveHotelDir } = require('./lib/session')
 
 const app = express()
 const PORT = 4000
@@ -36,8 +38,11 @@ const LOG_PATH = path.join(DATA_DIR, 'PBAcount.txt')
 if (!fs.existsSync(LOG_PATH)) fs.writeFileSync(LOG_PATH, '0')
 app.locals.logPath = LOG_PATH
 
-app.use(cors())
-app.use(express.json())
+// origin:true refleja el Origin y credentials:true permite la cookie de sesión en
+// dev cross-origin (panel :3000 → backend :4000). En prod es same-origin (proxy.php).
+app.use(cors({ origin: true, credentials: true }))
+// Límite alto: las fotos y el logo viajan como base64 en JSON (el default de 100kb no alcanza)
+app.use(express.json({ limit: '25mb' }))
 
 // Servir el frontend (dist) desde Express en producción
 const distPath = path.join(__dirname, '../dist')
@@ -52,6 +57,43 @@ app.use('/assets', express.static(assetsPath))
 app.use('/descargas', express.static(path.join(DATA_DIR, 'descargas')))
 
 app.get('/health', (_req, res) => res.json({ ok: true }))
+
+app.use('/auth', authRoutes)
+
+// ── Logo del hotel (por hotel) ──
+// GET: sirve config/hotels/<id>/hotel-logo.png (o el global legado), con fallback al
+//   placeholder de assets/. El hotel se resuelve por sesión (panel) o ?hotel= (móvil).
+// POST: guarda el logo (base64 PNG/JPEG, redimensionado en el cliente) en la carpeta
+//   del hotel de la SESIÓN — exige estar autenticado.
+const baseConfigDir = path.join(DATA_DIR, 'config')
+
+app.get('/hotel-logo', (req, res) => {
+  res.set('Cache-Control', 'no-cache')
+  const hotelId = getSessionHotelId(req, baseConfigDir) || req.query.hotel
+  const dir = resolveHotelDir(baseConfigDir, hotelId)
+  const logoPath = path.join(dir, 'hotel-logo.png')
+  if (fs.existsSync(logoPath)) return res.type('png').sendFile(logoPath)
+  res.type('png').sendFile(path.join(assetsPath, 'hotel-logo.png'))
+})
+
+app.post('/hotel-logo', (req, res) => {
+  try {
+    const hotelId = getSessionHotelId(req, baseConfigDir)
+    if (!hotelId) return res.status(401).json({ error: 'No autenticado' })
+    const image = String(req.body?.image || '')
+    const match = image.match(/^data:image\/(png|jpeg);base64,(.+)$/)
+    if (!match) return res.status(400).json({ error: 'Formato inválido: se espera data URL PNG/JPEG' })
+    const buffer = Buffer.from(match[2], 'base64')
+    if (!buffer.length || buffer.length > 3 * 1024 * 1024) {
+      return res.status(400).json({ error: 'Imagen vacía o mayor de 3MB' })
+    }
+    const dir = resolveHotelDir(baseConfigDir, hotelId, { create: true })
+    fs.writeFileSync(path.join(dir, 'hotel-logo.png'), buffer)
+    res.json({ ok: true })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
 
 // Square payment endpoint (local backend)
 app.post('/process-payment', async (req, res) => {

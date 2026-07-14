@@ -2,11 +2,73 @@
 // En Electron: siempre usar localhost:4000 para todo (viewer, mobile, printer)
 // En localhost web: http://localhost:4000 para TODO (viewer, mobile) - mismo backend para sincronizar config
 // En producción IONOS: rutas relativas para proxy.php (todos los apps)
-const BACKEND_URL = 
-  window.electronAPI ? 'http://localhost:4000' : 
-  (window.location.hostname === 'localhost' ? 'http://localhost:4000' : 
+const BACKEND_URL =
+  window.electronAPI ? 'http://localhost:4000' :
+  (window.location.hostname === 'localhost' ? 'http://localhost:4000' :
     '' // Producción: usar rutas relativas para proxy.php
   )
+
+// En dev el panel corre en :3000 y el backend en :4000 (cross-origin): la cookie de
+// sesión solo viaja si las peticiones autenticadas usan credentials:'include'. En prod
+// es same-origin, así que es inofensivo. Se aplica a todo lo que dependa de la sesión.
+const CREDS = { credentials: 'include' }
+
+// ─── Autenticación de hotel (login por sesión, cuentas creadas por Printbox) ──
+
+export async function login(user, password) {
+  const res = await fetch(`${BACKEND_URL}/auth/login`, {
+    method: 'POST', ...CREDS,
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ user, password }),
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok || !data.ok) throw new Error(data?.error || 'Error al iniciar sesión')
+  return data // { ok, hotelId, nombre }
+}
+
+export async function getMe() {
+  const res = await fetch(`${BACKEND_URL}/auth/me`, CREDS)
+  if (res.status === 401) return null
+  if (!res.ok) throw new Error('Error comprobando la sesión')
+  return res.json() // { hotelId, nombre }
+}
+
+export async function logout() {
+  await fetch(`${BACKEND_URL}/auth/logout`, { method: 'POST', ...CREDS }).catch(() => {})
+}
+
+// Logo del hotel: lo sirve el backend desde config/hotels/<id>/hotel-logo.png con fallback
+// al placeholder de assets/. Va por endpoint (no archivo estático) para que el logo subido
+// sobreviva a un redespliegue de dist/. En el panel el hotel se resuelve por la cookie de
+// sesión; en el móvil hay que pasar el hotelId del QR → hotelLogoUrl(hotelId).
+export function hotelLogoUrl(hotelId = '') {
+  const q = hotelId ? `?hotel=${encodeURIComponent(hotelId)}` : ''
+  return `${BACKEND_URL}/hotel-logo${q}`
+}
+
+export async function uploadHotelLogo(dataUrl) {
+  const res = await fetch(hotelLogoUrl(), {
+    method: 'POST', ...CREDS,
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ image: dataUrl }),
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok || !data.ok) throw new Error(data?.error || 'Error al subir el logo')
+  return data
+}
+
+// Habitaciones registradas del hotel: [{ nombre, codigo }] — codigo sin prefijo ev-.
+// Viajan por el mismo POST /config que config/textos (requiere sesión).
+export async function saveHabitaciones(habitaciones) {
+  const res = await fetch(`${BACKEND_URL}/config/`, {
+    method: 'POST', ...CREDS,
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ habitaciones }),
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data?.error || 'Error al guardar las habitaciones')
+  return data
+}
 
 // ─── API Printbox ───────────────────────────────────────────────────────────
 
@@ -152,13 +214,12 @@ function normalizeEventCode(eventCode = '') {
   return String(eventCode).trim().replace(/^ev[-_]?/i, '')
 }
 
-export async function getConfig(eventCode = '') {
-  // Si eventCode incluye prefijo 'ev-' o 'ev_', se elimina antes de hacer la petición
-  const normalizedEventCode = normalizeEventCode(eventCode)
-  const queryParam = normalizedEventCode ? `?eventCode=${encodeURIComponent(normalizedEventCode)}` : ''
+export async function getConfig(hotelId = '') {
+  // Panel: hotel por cookie de sesión (no hace falta hotelId). Móvil: hotelId del QR.
+  const queryParam = hotelId ? `?hotel=${encodeURIComponent(hotelId)}` : ''
   const url = `${BACKEND_URL}/config/${queryParam}`
   try {
-    const res = await fetch(url)
+    const res = await fetch(url, CREDS)
     if (!res.ok) {
       // Log the error but return defaults instead of throwing
       console.error(`GET /config returned ${res.status}, using defaults`)
@@ -210,17 +271,15 @@ export async function getConfig(eventCode = '') {
   }
 }
 
-export async function saveConfig(config, textos, eventCode = '') {
-  // Si eventCode incluye prefijo 'ev-' o 'ev_', se elimina antes de guardar.
+export async function saveConfig(config, textos) {
+  // Requiere sesión: el backend guarda SIEMPRE en la carpeta del hotel de la cookie.
   // IMPORTANTE: usar /config/ con barra final para evitar redirect 301 de Apache.
   // Sin la barra, Apache redirige /config → /config/ y el redirect convierte POST en GET,
   // perdiendo el body (los precios llegan vacíos al servidor).
-  const normalizedEventCode = normalizeEventCode(eventCode)
-  const queryParam = normalizedEventCode ? `?eventCode=${encodeURIComponent(normalizedEventCode)}` : ''
-  const url = `${BACKEND_URL}/config/${queryParam}`
+  const url = `${BACKEND_URL}/config/`
   try {
     const res = await fetch(url, {
-      method: 'POST',
+      method: 'POST', ...CREDS,
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ config, textos }),
     })
@@ -328,8 +387,10 @@ export async function sendPhoto({ event, image, times = 1, name, phone, print, o
 
 // Avisa a recepción por e-mail de que una habitación ha enviado fotos.
 // items: [{ thumbnail: 'data:image/jpeg;base64,...', copies: N }, ...] — una fila por foto del pedido (no por copia).
-export async function notifyRoomOrder({ room, items, total, paymentMethod }) {
-  const res = await fetch(`${BACKEND_URL}/printbox/notify-order`, {
+export async function notifyRoomOrder({ hotel = '', room, items, total, paymentMethod }) {
+  // El email de recepción se lee del hotel indicado (?hotel= lo resuelve el backend).
+  const q = hotel ? `?hotel=${encodeURIComponent(hotel)}` : ''
+  const res = await fetch(`${BACKEND_URL}/printbox/notify-order${q}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ room: normalizeEventCode(room), items, total, paymentMethod }),

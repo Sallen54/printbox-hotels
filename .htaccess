@@ -27,6 +27,12 @@ Header always set Content-Security-Policy "default-src *; script-src * 'unsafe-i
 # Config endpoints - ANTES que "archivos reales"
 RewriteRule ^config/?$ /proxy.php [PT,L,QSA]
 
+# Login/sesión de hotel
+RewriteRule ^auth/.*$ /proxy.php [PT,L,QSA]
+
+# Logo del hotel (GET sirve, POST guarda en config/hotels/<id>/)
+RewriteRule ^hotel-logo/?$ /proxy.php [PT,L,QSA]
+
 # Reset config endpoint
 RewriteRule ^reset-config/?$ /proxy.php [PT,L,QSA]
 

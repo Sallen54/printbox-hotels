@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react'
-import { findEvent, sendPhoto, getConfig, processPayment, getPayPalConfig, createPayPalOrder, capturePayPalOrder, notifyRoomOrder } from '../shared/api'
+import { findEvent, sendPhoto, getConfig, processPayment, getPayPalConfig, createPayPalOrder, capturePayPalOrder, notifyRoomOrder, hotelLogoUrl } from '../shared/api'
 import { useInterval } from '../shared/hooks/useInterval'
 import './Mobile.css'
 
@@ -46,6 +46,9 @@ const SQUARE_LOCATION_ID = 'LHB32XGQK68GX'
 export default function MobileApp() {
   // --- Estados del flujo ---
   const [step, setStep] = useState(STEP_EVENT)
+  // del QR (?hotel=): selecciona la config del hotel. Se inicializa de forma síncrona
+  // desde la URL para que el primer render ya pida el logo correcto (sin parpadeo).
+  const [hotelId, setHotelId] = useState(() => new URLSearchParams(window.location.search).get('hotel') || '')
   const [eventCode, setEventCode] = useState('')
   const [eventError, setEventError] = useState('')
   const [uuid, setUuid] = useState(null)
@@ -118,7 +121,7 @@ export default function MobileApp() {
   // LOCALSTORAGE
   // ============================================
   const saveToLocalStorage = () => {
-    const data = { eventCode, step, capturedPhotos, uuid, textos }
+    const data = { hotelId, eventCode, step, capturedPhotos, uuid, textos }
     localStorage.setItem('printbox_mobile_state', JSON.stringify(data))
   }
 
@@ -127,6 +130,7 @@ export default function MobileApp() {
     if (data) {
       try {
         const parsed = JSON.parse(data)
+        if (parsed.hotelId) setHotelId(parsed.hotelId)
         setEventCode(parsed.eventCode || '')
         setStep(parsed.step || STEP_EVENT)
         setCapturedPhotos(parsed.capturedPhotos || [])
@@ -155,25 +159,28 @@ export default function MobileApp() {
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search)
+    const hotelParam = params.get('hotel') || ''
+    if (hotelParam) setHotelId(hotelParam)
     const ev = params.get('habitacion')
     if (ev) {
       const code = ev.replace('ev-', '')
       setEventCode(code)
       setLoadingFromQR(true)
-      setTimeout(() => handleConnectEvent(code), 100)
+      setTimeout(() => handleConnectEvent(code, hotelParam), 100)
     } else {
       const saved = loadFromLocalStorage()
+      const effectiveHotel = hotelParam || saved?.hotelId || ''
       if (saved?.eventCode && saved.step !== STEP_EVENT) {
         if (saved.uuid) {
           setStep(saved.step)
           setUuid(saved.uuid)
           setLoadingFromQR(false)
         } else {
-          setTimeout(() => handleConnectEvent(saved.eventCode), 100)
+          setTimeout(() => handleConnectEvent(saved.eventCode, effectiveHotel), 100)
         }
       }
       if (!saved?.eventCode) {
-        getConfig().then(d => { if (d.textos) applyTextos(d.textos) }).catch(() => {})
+        getConfig(effectiveHotel).then(d => { if (d.textos) applyTextos(d.textos) }).catch(() => {})
       }
     }
   }, [])
@@ -181,20 +188,20 @@ export default function MobileApp() {
   // Comprobación del servicio a nivel de hotel (independiente de la habitación),
   // tanto al entrar como periódicamente por si recepción lo activa/desactiva mientras se usa.
   useEffect(() => {
-    getConfig().then(d => {
+    const h = new URLSearchParams(window.location.search).get('hotel') || ''
+    getConfig(h).then(d => {
       setServiceUnavailable(d.config?.servicio_disponible === false)
     }).catch(() => {})
   }, [])
 
   useEffect(() => {
     saveToLocalStorage()
-  }, [eventCode, step, capturedPhotos, uuid])
+  }, [hotelId, eventCode, step, capturedPhotos, uuid])
 
-  // Refrescar precios y evento impresora cada 5s
-  // (config global del hotel — precios/email son por-hotel, no por-habitación)
+  // Refrescar precios y evento impresora cada 5s (config del hotel del QR)
   useEffect(() => {
     const interval = setInterval(() => {
-      getConfig().then(d => {
+      getConfig(hotelId).then(d => {
         if (d.textos) applyTextos(d.textos)
         setServiceUnavailable(d.config?.servicio_disponible === false)
         if (d.config?.evento_printer) {
@@ -210,7 +217,7 @@ export default function MobileApp() {
       }).catch(() => {})
     }, 5000)
     return () => clearInterval(interval)
-  }, [eventCode])
+  }, [eventCode, hotelId])
 
   const loadPrinterEvent = useCallback(async (eventCodePrinter) => {
     if (!eventCodePrinter) { setPrinterUuid(null); return }
@@ -347,16 +354,17 @@ export default function MobileApp() {
   // ============================================
   // CONEXIÓN EVENTO Y GALERÍA
   // ============================================
-  async function handleConnectEvent(code = null) {
+  async function handleConnectEvent(code = null, hotelOverride = null) {
     const eventCodeToUse = normalizeEventCode(code || eventCode)
     if (!eventCodeToUse) { setEventError('Introduce el número de habitación'); return }
+    const h = hotelOverride ?? hotelId
     setLoading(true)
     setEventError('')
     try {
       const id = await findEvent(`ev-${eventCodeToUse}`)
       setUuid(id)
       uuidRef.current = id
-      const configData = await getConfig()
+      const configData = await getConfig(h)
       if (configData.textos) applyTextos(configData.textos)
       if (configData.config?.evento_printer) {
         const printerCode = configData.config.evento_printer.replace(/^ev[-_]?/i, '')
@@ -500,7 +508,7 @@ export default function MobileApp() {
       notifyItems.push({ thumbnail: await resizeImageBase64(photo.dataUrl, 300), copies: photo.copies || 1 })
     }
     try {
-      await notifyRoomOrder({ room: normalizeEventCode(eventCode), items: notifyItems, total: amountPaid ?? totalPrice(), paymentMethod })
+      await notifyRoomOrder({ hotel: hotelId, room: normalizeEventCode(eventCode), items: notifyItems, total: amountPaid ?? totalPrice(), paymentMethod })
     } catch (e) {
       console.error('notifyRoomOrder error:', e)
     }
@@ -513,7 +521,7 @@ export default function MobileApp() {
   if (serviceUnavailable) {
     return (
       <div className="mobile-app event-container">
-        <img src="/assets/hotel-logo.png" alt="Logo" className="event-logo" />
+        <img src={hotelLogoUrl(hotelId)} alt="Logo" className="event-logo" />
         <div className="service-unavailable-box">
           <p><span className="service-unavailable-flag">🇪🇸</span>Servicio no disponible temporalmente. Lamentamos las molestias.</p>
           <p><span className="service-unavailable-flag">🇬🇧</span>Service temporarily unavailable. We apologize for the inconvenience.</p>
@@ -528,7 +536,7 @@ export default function MobileApp() {
     if (loadingFromQR) {
       return (
         <div className="mobile-app event-container">
-          <img src="/assets/hotel-logo.png" alt="Logo" className="event-logo" />
+          <img src={hotelLogoUrl(hotelId)} alt="Logo" className="event-logo" />
           <h1 className="event-title">Printbox Hotels</h1>
           <p className="event-subtitle">Cargando habitación...</p>
           <div className="d-flex justify-content-center"><span className="spinner-border text-warning" style={{width:'3rem',height:'3rem'}} /></div>
@@ -538,7 +546,7 @@ export default function MobileApp() {
     }
     return (
       <div className="mobile-app event-container">
-        <img src="/assets/hotel-logo.png" alt="Logo" className="event-logo" />
+        <img src={hotelLogoUrl(hotelId)} alt="Logo" className="event-logo" />
         <h1 className="event-title">Printbox Hotels</h1>
         <p className="event-subtitle">Introduce el número de habitación</p>
         <div className="event-input-wrapper">
@@ -560,7 +568,7 @@ export default function MobileApp() {
     return (
       <div className="mobile-app">
         <div className="mobile-header d-flex align-items-center gap-3 justify-content-between">
-          <img src="/assets/hotel-logo.png" alt="Logo" className="mobile-header-ic-launcher-large" />
+          <img src={hotelLogoUrl(hotelId)} alt="Logo" className="mobile-header-ic-launcher-large" />
           <div className="flex-grow-1">
             <div className="mobile-header-title"><span style={{fontSize:'1.2rem',marginRight:'6px'}}>🇪🇸</span> Sube o haz tus fotos para imprimir<br /><small className="text-muted"><span style={{fontSize:'1rem',marginRight:'6px'}}>🇬🇧</span> Upload or take your photos to print</small></div>
           </div>
@@ -645,7 +653,7 @@ export default function MobileApp() {
                     notifyItems.push({ thumbnail: await resizeImageBase64(photo.dataUrl, 300), copies: photo.copies || 1 })
                   }
                   try {
-                    await notifyRoomOrder({ room: normalizeEventCode(eventCode), items: notifyItems, total: '0.00', paymentMethod: 'Gratis (foto de cámara)' })
+                    await notifyRoomOrder({ hotel: hotelId, room: normalizeEventCode(eventCode), items: notifyItems, total: '0.00', paymentMethod: 'Gratis (foto de cámara)' })
                   } catch (e) { console.error('notifyRoomOrder error:', e) }
                   showToast(`${capturedPhotos.length} foto(s) subida(s)`)
                   setCapturedPhotos([])
@@ -781,7 +789,7 @@ export default function MobileApp() {
   if (step === STEP_SUCCESS) {
     return (
       <div className="mobile-app success-container">
-        <img src="/assets/hotel-logo.png" alt="Success" className="success-image" />
+        <img src={hotelLogoUrl(hotelId)} alt="Success" className="success-image" />
         <h2 className="success-title">¡Pedido enviado!</h2>
         <p className="success-text">Tu pedido ha sido enviado. Tus fotos se imprimirán en breve.</p>
         <p className="success-small-text">¡Gracias por tu compra!</p>
