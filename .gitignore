@@ -13,3 +13,5 @@ config/paypal.json
 config/hotels.json
 config/session_secret.txt
 config/hotels/
+config/coupon_secret.txt
+config/square.json

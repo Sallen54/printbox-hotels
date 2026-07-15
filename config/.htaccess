@@ -1,8 +1,19 @@
 # Nada dentro de config/ debe servirse por HTTP: aquí viven las cuentas de hotel
 # (hotels.json con hashes), el secreto de sesión (session_secret.txt), y la config,
 # logos y textos de TODOS los hoteles. proxy.php los lee/escribe por filesystem.
-Require all denied
+#
+# IMPORTANTE: el bloqueo va por FICHERO (FilesMatch), no por carpeta ("Require all
+# denied" a secas). La API "/config" del sitio se reescribe (RewriteRule en el
+# .htaccess raíz) hacia /proxy.php, pero como URL empieza igual que esta carpeta
+# ("config"); un "deny" a nivel de directorio bloqueaba también esa API con 403
+# antes de que la reescritura llegara a ejecutarse. Por-fichero no tiene ese problema
+# porque nunca se sirve un fichero real de dentro de config/ para esa ruta.
+<FilesMatch ".">
+    Require all denied
+</FilesMatch>
 <IfModule !mod_authz_core.c>
-    Order allow,deny
-    Deny from all
+    <FilesMatch ".">
+        Order allow,deny
+        Deny from all
+    </FilesMatch>
 </IfModule>

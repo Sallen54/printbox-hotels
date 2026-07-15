@@ -33,14 +33,8 @@ RewriteRule ^auth/.*$ /proxy.php [PT,L,QSA]
 # Logo del hotel (GET sirve, POST guarda en config/hotels/<id>/)
 RewriteRule ^hotel-logo/?$ /proxy.php [PT,L,QSA]
 
-# Reset config endpoint
-RewriteRule ^reset-config/?$ /proxy.php [PT,L,QSA]
-
 # Payment endpoint
 RewriteRule ^process-payment/?$ /proxy.php [PT,L,QSA]
-
-# Debug endpoint
-RewriteRule ^debug(/.*)?$ /proxy.php [PT,L,QSA]
 
 # APIs y proxy
 RewriteRule ^health$ /proxy.php [PT,L,QSA]

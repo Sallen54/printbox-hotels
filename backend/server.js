@@ -95,6 +95,24 @@ app.post('/hotel-logo', (req, res) => {
   }
 })
 
+// Credenciales de Square: variables de entorno si existen, si no config/square.json
+// (fuera de git, protegido por config/.htaccess en prod). Nunca hardcodeadas en el código.
+function getSquareCredentials() {
+  let accessToken = process.env.SQUARE_ACCESS_TOKEN || ''
+  let locationId = process.env.SQUARE_LOCATION_ID || ''
+  if (!accessToken || !locationId) {
+    try {
+      const f = path.join(baseConfigDir, 'square.json')
+      if (fs.existsSync(f)) {
+        const parsed = JSON.parse(fs.readFileSync(f, 'utf8'))
+        if (!accessToken) accessToken = parsed.accessToken || ''
+        if (!locationId) locationId = parsed.locationId || ''
+      }
+    } catch {}
+  }
+  return { accessToken, locationId }
+}
+
 // Square payment endpoint (local backend)
 app.post('/process-payment', async (req, res) => {
   try {
@@ -104,8 +122,10 @@ app.post('/process-payment', async (req, res) => {
       return res.status(400).json({ error: 'Token y amount son requeridos' })
     }
 
-    const SQUARE_ACCESS_TOKEN = process.env.SQUARE_ACCESS_TOKEN || 'EAAAl0j_Yx8fE69GiPLm7N3hmvuLAD2h6uRIaKomqSVfInluHW9gzA0twdKLPrn8'
-    const SQUARE_LOCATION_ID = process.env.SQUARE_LOCATION_ID || 'LHB32XGQK68GX'
+    const { accessToken: SQUARE_ACCESS_TOKEN, locationId: SQUARE_LOCATION_ID } = getSquareCredentials()
+    if (!SQUARE_ACCESS_TOKEN) {
+      return res.status(500).json({ error: 'Square no configurado en el servidor' })
+    }
 
     const payload = {
       source_id: token,

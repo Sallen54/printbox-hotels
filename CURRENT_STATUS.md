@@ -1,4 +1,41 @@
-# Estado verificado (14 julio 2026)
+# Estado verificado (15 julio 2026)
+
+---
+
+## Auditoría de seguridad y arreglos (15 julio)
+
+Revisión completa de `proxy.php` (única superficie realmente expuesta en producción) pidiendo explícitamente fallos de seguridad. Confirmado en vivo contra `vf.incomar.net` con `curl` antes y después de cada arreglo.
+
+### Crítico — ya corregido
+- **`/coupon/create` y `/coupon/list` no exigían sesión**: cualquiera podía generar cupones firmados (HMAC) de "pago completo" para cualquier habitación, o listar los cupones de un evento, sin login. Confirmado explotable en vivo (`POST /coupon/create` sin cookie devolvía `200` con un código válido). **Arreglado**: ambas rutas exigen ahora `getSessionHotelId()` y además comprueban que la `evento` pertenece a una habitación del **propio** hotel de la sesión (`hotelOwnsRoom()`) — antes ni siquiera estaban aisladas por hotel (`getCouponFile()` usaba la carpeta global).
+- **Bug relacionado, descubierto durante el arreglo**: el campo `type` (`discount`/`full`) que ya esperaba el frontend (`ViewerApp.jsx`/`MobileApp.jsx`) **nunca se guardaba ni se devolvía** en `/coupon/create` ni `/coupon/validate` — aplicar un cupón no reducía el precio realmente pagado (el descuento mostrado era solo visual). Efecto colateral: esto hacía el hueco de seguridad de arriba menos grave de lo que parecía (no se podía imprimir gratis todavía), pero el sistema de cupones estaba roto para el uso legítimo. **Arreglado**: `type` se persiste y se devuelve; el cálculo del frontend (ya escrito correctamente, no hubo que tocarlo) empezó a funcionar solo.
+- **`/debug/config` sin autenticación**: exponía la ruta del servidor y el contenido crudo de `textos.txt` (precios, email de recepción) de la config global. Confirmado en vivo. **Eliminado** por completo (no lo usaba el frontend).
+- **`/reset-config` sin autenticación NI comprobación de método HTTP**: un simple `GET` (disparable con un `<img src="...">`) restauraba los textos/precios a los valores por defecto. **Eliminado** por completo (no lo usaba el frontend).
+
+### Alto — ya corregido
+- **Token de acceso de Square hardcodeado en el código** (`proxy.php`, duplicado en la ruta legacy `?route=process-payment`, y en `backend/server.js`), committeado en el historial de git. **Arreglado**: ahora se lee de la variable de entorno `SQUARE_ACCESS_TOKEN`/`SQUARE_LOCATION_ID` o, si no existe, de `config/square.json` (nuevo, gitignored; hay un `config/square.example.json` con placeholders documentando el formato). `/process-payment` responde `500` explícito si no hay credenciales, en vez de usar un secreto hardcodeado.
+- **`COUPON_SECRET` hardcodeado** (`'pba_s3cr3t_k3y_2026'`) → ahora se genera aleatorio y se guarda en `config/coupon_secret.txt` (gitignored, protegido por `config/.htaccess`), igual que ya existía para `session_secret.txt`. Efecto colateral bueno: invalida automáticamente cualquier cupón firmado con la clave vieja (incluidos los de las pruebas de esta auditoría).
+
+### Limpieza relacionada (encontrada durante la misma revisión)
+- `pba_requests.log` logueaba el body de **todas** las peticiones, incluido `/auth/login` — la contraseña de la cuenta de cada hotel quedaba en texto plano en ese log. Arreglado: el body de `/auth/*` ya no se loguea (`[redacted]`).
+- `/process-payment` escribía en `config/debug.log` el payload completo de cada pago (incluido el `source_id` de Square) y la respuesta de Square — sin ningún endpoint que lo mostrara ya (`/debug/config` se eliminó). Se quitó ese logging.
+- `getTextosFile($configDir, $eventCode)` tenía una rama "por evento" (`textos_<código>.txt`) que **nunca se llamaba** con `$eventCode` no vacío en ningún sitio del código actual — simplificado a una única función sin esa rama muerta.
+- Dependencia `axios` en `package.json`: no se usa en ningún sitio del código (ni `src/` ni `backend/`) — eliminada.
+
+### No tocado (fuera de alcance, decisión del usuario)
+- `hotelId` no es secreto por diseño (viaja en el QR/URL); cualquiera que lo conozca puede leer precios/email de ese hotel vía `GET /config?hotel=<id>` sin login. Aceptado como parte del diseño multi-hotel.
+- El interruptor "servicio disponible" solo se comprueba en el cliente móvil, no en el backend.
+- Sin límite de intentos en `/auth/login` (fuerza bruta).
+- CSP totalmente abierta en `.htaccess` raíz (`"CSP disabled for debugging"`).
+
+### Verificado
+- `php -l proxy.php` y `node -c backend/server.js` limpios tras cada cambio.
+- Servidor PHP embebido aislado (fuera del proyecto real, en scratchpad) con dos hoteles de prueba: `coupon/create`/`coupon/list` sin sesión → 401; con sesión de OTRO hotel sobre una habitación ajena → 403; con la sesión correcta → 200 y `type` presente en la respuesta; `coupon/validate` devuelve `type`; `debug/config` y `reset-config` → 404; `process-payment` sin credenciales → 500 explícito, con `config/square.json` → pasa la comprobación (la llamada real a Square no se pudo probar por restricciones de red del entorno de pruebas, no relacionado con el cambio).
+- Confirmado en vivo contra `vf.incomar.net` (antes del arreglo): `coupon/create` sin sesión → `200` (explotable), `debug/config` → `200` con datos reales de la config global.
+
+### Pendiente
+- Subir a producción: `proxy.php`, `.htaccess`, `config/square.json` (nuevo).
+- Rotar el token de Square en el panel de Square — el valor actual estuvo expuesto en el código fuente y en el historial de git.
 
 ---
 

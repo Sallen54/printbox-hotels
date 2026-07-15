@@ -118,12 +118,15 @@ Igual que Adventures: como IONOS no permite Node.js, el backend Express se reemp
 ```
 /  (raíz del subdominio de Printbox Hotels)
 ├── index.html          ← del dist/
-├── assets/              ← del dist/ (incluye hotel-logo.png — sustituir por el logo real del hotel)
+├── assets/              ← del dist/ (incluye hotel-logo.png — solo placeholder de fallback)
 ├── proxy.php            ← reemplaza el backend Express (incluye envío de e-mail con mail() nativo)
 ├── .htaccess            ← enruta las llamadas API al proxy
-└── config/              ← carpeta con permisos de escritura (chmod 755)
-    ├── servidor_api.txt
-    └── textos.txt
+└── config/              ← carpeta con permisos de escritura (chmod 755), ver §8
+    ├── .htaccess         ← deniega TODO acceso HTTP directo a este directorio
+    ├── hotels.json       ← cuentas (Printbox, con scripts/add-hotel.js)
+    ├── session_secret.txt, coupon_secret.txt   ← se generan solos, no tocar a mano
+    ├── square.json       ← credenciales de Square (copiar de config/square.example.json)
+    └── hotels/<id>/      ← config, precios, logo y habitaciones de cada hotel
 ```
 
 ### Pasos para publicar
@@ -132,9 +135,9 @@ npm run build
 ```
 Sube por FTP a la raíz del subdominio: todo `dist/` (ya incluye `proxy.php`, `.htaccess`, `config/` copiados automáticamente por `scripts/copy-dist-assets.js`).
 
-> ⚠️ **No sobreescribir `config/`** si ya tiene datos (cuentas, secreto de sesión, config de los hoteles). Sube solo los `assets/`, `index.html`, `proxy.php` y `.htaccess` — nunca la carpeta `config/` entera.
+> ⚠️ **No sobreescribir `config/`** si ya tiene datos (cuentas, secretos, config de los hoteles). `npm run build` copia tu `config/` LOCAL entero a `dist/config/` (incluida tu `config/hotels.json` y `config/square.json` de pruebas) — sube solo `assets/`, `index.html`, `proxy.php` y `.htaccess`, **nunca** la carpeta `config/` entera de `dist/`.
 >
-> ⚠️ **La primera vez**, sube manualmente `config/.htaccess` (deniega el acceso HTTP a las cuentas y la config). Y sube el `config/hotels.json` y las carpetas `config/hotels/<id>/` que hayas generado en local con `add-hotel.js`.
+> ⚠️ **La primera vez**, sube manualmente: `config/.htaccess` (deniega TODO acceso HTTP a `config/` — debe bloquear por fichero con `<FilesMatch>`, no a nivel de carpeta, o romperá la ruta `/config` de la API, ver §12), `config/hotels.json` y `config/hotels/<id>/` generados con `add-hotel.js`, y `config/square.json` (copia `config/square.example.json` con las credenciales reales de Square).
 
 **Alta de hoteles (Printbox):** el hosting IONOS no tiene Node, así que las cuentas se crean **en local** con `node scripts/add-hotel.js ...` (§1) y luego se suben por FTP los ficheros resultantes (`config/hotels.json` y `config/hotels/<id>/`).
 
@@ -158,24 +161,28 @@ printbox-hotels/
 │
 ├── backend/
 │   ├── server.js        Express (puerto 4000) — sirve frontend + API proxy (solo dev)
+│   ├── lib/session.js   Sesión de hotel (cookie HMAC), compartida por config.js y auth.js
 │   └── routes/
+│       ├── auth.js      POST /login, GET /me, POST /logout
 │       ├── printbox.js  Proxy → gestion.printboxweb.com + POST /notify-order (dev: solo loguea)
 │       ├── print.js     Descarga → PDF → imprime
-│       └── config.js    Lee/escribe config/*.txt (incluye email_recepcion)
+│       └── config.js    Lee/escribe config/hotels/<id>/*.txt (incluye email_recepcion)
 │
 ├── src/
 │   ├── main.jsx         React Router — /viewer /mobile /printer
 │   ├── public/assets/
-│   │   └── hotel-logo.png   ← SUSTITUIR por el logo real del hotel
+│   │   └── hotel-logo.png   ← placeholder de fallback (cada hotel sube el suyo desde el navegador)
 │   ├── styles/global.css    Paleta de colores centralizada (variables --pb-*)
-│   ├── shared/api.js         Todas las llamadas HTTP, incluida notifyRoomOrder()
-│   ├── viewer/ViewerApp.jsx   Monitor de recepción + Admin (precios + email de recepción)
-│   ├── printer/PrinterApp.jsx Impresión física
-│   └── mobile/MobileApp.jsx   App del huésped (galería, cámara, pedido, pago, aviso a recepción)
+│   ├── shared/api.js         Todas las llamadas HTTP: login/logout/getMe, getConfig, notifyRoomOrder()...
+│   ├── viewer/ViewerApp.jsx   Login + Monitor de recepción + Admin (precios, email, cupones, QR)
+│   ├── printer/PrinterApp.jsx Impresión física (exige sesión del Monitor)
+│   └── mobile/MobileApp.jsx   App del huésped (subir/hacer foto, pedido, pago, cupón, aviso a recepción)
 │
-├── config/
-│   ├── servidor_api.txt
-│   └── textos.txt
+├── config/                    Ver §8 — cuentas, secretos y config/hotels/<id>/ (todo fuera de git)
+│
+├── scripts/
+│   ├── add-hotel.js          CLI de Printbox: alta/reset de cuentas de hotel
+│   └── copy-dist-assets.js   Copia .htaccess, proxy.php y config/ a dist/ tras el build
 │
 ├── package.json
 ├── vite.config.js
@@ -218,7 +225,7 @@ Igual que en Adventures: hace polling de las fotos marcadas para imprimir, gener
 - Un pedido con una foto a 3 copias genera **una fila** en el email (no 3 envíos).
 
 ### En producción (IONOS / `proxy.php`)
-Lee el e-mail de recepción del hotel (`email_recepcion` en `config/textos.txt` — único para todo el despliegue) y envía un email HTML con las miniaturas embebidas inline (MIME `multipart/related`, sin librerías externas) usando **`mail()` nativo de PHP** — elegido deliberadamente como la opción más simple, sin SMTP ni PHPMailer.
+Lee el e-mail de recepción del hotel (`email_recepcion` en `config/hotels/<id>/textos.txt` — único por hotel, vale para todas sus habitaciones) y envía un email HTML con las miniaturas embebidas inline (MIME `multipart/related`, sin librerías externas) usando **`mail()` nativo de PHP** — elegido deliberadamente como la opción más simple, sin SMTP ni PHPMailer. El hotel se resuelve por el `?hotel=<id>` que el móvil añade desde el QR (el aviso lo dispara siempre el huésped, sin sesión).
 
 > ⚠️ **Limitación conocida y aceptada:** la fiabilidad de `mail()` en IONOS depende de la configuración SPF/DKIM del dominio — puede terminar en spam. Si en el futuro hace falta más fiabilidad, la vía sería migrar a SMTP real (Gmail, Brevo, SendGrid, etc.), pero eso queda fuera del alcance actual a propósito.
 
@@ -238,18 +245,24 @@ Estructura multi-hotel:
 
 ```
 config/
-  .htaccess               # "Require all denied": nada de config/ se sirve por HTTP
+  .htaccess               # deniega TODO acceso HTTP a este directorio (por fichero, ver nota)
   hotels.json             # cuentas: { "<hotelId>": { user, passHash(bcrypt), nombre } }
   session_secret.txt      # secreto HMAC de sesión (se genera solo la 1ª vez)
+  coupon_secret.txt       # secreto HMAC de los códigos de cupón (se genera solo la 1ª vez)
+  square.json             # credenciales de Square (copiar de square.example.json)
+  paypal.json             # credenciales de PayPal (opcional, copiar de paypal.example.json)
   hotels/
     <hotelId>/            # una carpeta por hotel
       servidor_api.txt
       textos.txt
       habitaciones.json
       hotel-logo.png
+      cupones-<evento>.json      # cupones de descuento/pago completo de esa habitación
 ```
 
 Cada hotel se resuelve por la **sesión** (panel) o por **`?hotel=<id>`** (móvil). Si no hay `hotelId`, se lee el `config/` global (compat con el modelo antiguo de un solo hotel).
+
+> ⚠️ **`config/.htaccess` debe denegar por FICHERO** (`<FilesMatch ".">Require all denied</FilesMatch>`), no con un `Require all denied` a nivel de carpeta: como `/config` es también una ruta real de la API (reescrita a `proxy.php`), un deny a nivel de directorio la bloquea con 403 antes de que la reescritura actúe. Ver §12.
 
 ### `config/hotels/<id>/servidor_api.txt`
 ```
@@ -289,8 +302,14 @@ Habitaciones registradas (asistente inicial / Admin), código **sin** prefijo `e
 ### `config/hotels/<id>/hotel-logo.png`
 Logo subido desde el navegador (`POST /hotel-logo`, requiere sesión). Si no existe, `GET /hotel-logo` sirve el placeholder de `assets/`.
 
-### `config/hotels.json` (cuentas) y `config/session_secret.txt`
-Los gestiona `scripts/add-hotel.js` y el backend; **nunca** editar a mano `session_secret.txt`. Ambos quedan fuera del alcance HTTP por `config/.htaccess`.
+### `config/hotels.json` (cuentas), `session_secret.txt` y `coupon_secret.txt`
+`hotels.json` lo gestiona `scripts/add-hotel.js`; los dos secretos los genera el propio backend la primera vez que hacen falta — **nunca** editarlos a mano. Los tres quedan fuera del alcance HTTP por `config/.htaccess`.
+
+### `config/square.json` y `config/paypal.json`
+Credenciales de las pasarelas de pago (`accessToken`/`locationId` para Square, `clientId`/`clientSecret`/`env` para PayPal). Cada uno tiene un `*.example.json` con placeholders en el repo — copia el que corresponda, rellénalo con las credenciales reales y **nunca lo subas a git** (ya están en `.gitignore`). Si faltan, `/process-payment` y `/paypal/*` responden 500 con un error explícito en vez de fallar en silencio.
+
+### Cupones de descuento/pago completo
+`GET/POST /coupon/*` (§11) — cada hotel genera desde el Admin del Monitor cupones de un solo uso para una habitación suya: **descuento** (resta del importe) o **pago completo** (cubre el 100% y salta Square/PayPal). Se guardan en `config/hotels/<id>/cupones-<evento>.json`, firmados con HMAC (`coupon_secret.txt`) para que no se puedan falsificar a mano. Crear/listar cupones exige sesión del hotel dueño de esa habitación; validar/canjear un código no (lo hace el huésped sin login), pero solo un código realmente emitido por un hotel autenticado supera la firma.
 
 ---
 
@@ -333,12 +352,18 @@ App → POST /printbox/photo-send { event, image: base64, times }
     → /api/v1/events/photo/send → { success: true }
 
 AVISO A RECEPCIÓN (una vez por pedido completo)
-App → POST /printbox/notify-order { room, items: [{thumbnail, copies}], total, paymentMethod }
-    → lee email_recepcion del textos.txt global del hotel → envía e-mail (mail() en prod / log en dev)
+App → POST /printbox/notify-order?hotel=<id> { room, items: [{thumbnail, copies}], total, paymentMethod }
+    → lee email_recepcion del textos.txt del hotel → envía e-mail (mail() en prod / log en dev)
 
 CONFIG (precios + email de recepción, únicos para todo el hotel)
-App → GET  /config
-App → POST /config
+App (panel, con sesión) → GET/POST /config
+App (móvil, sin sesión) → GET /config?hotel=<id>
+
+CUPONES (por habitación; crear/listar exigen sesión del hotel dueño de esa habitación)
+Panel  → POST /coupon/create { evento, amount, type: 'discount'|'full', expires_hours }
+Panel  → GET  /coupon/list?evento=<code>
+Huésped → POST /coupon/validate { code, evento }   (solo comprueba)
+Huésped → POST /coupon/redeem   { code, evento, order_id }   (consume, tras pago o si type=full)
 ```
 
 ---
@@ -362,6 +387,12 @@ Solo funciona en HTTPS. En desarrollo local solo funciona la galería.
 **"Habitación no encontrada"**
 Verificar el número de habitación (solo dígitos, sin `ev-`). Comprobar que existe como evento en el backend Laravel.
 
+**403 en `/config` (u otra ruta) que debería dar 401 o funcionar**
+Casi siempre es `config/.htaccess` bloqueando por CARPETA en vez de por FICHERO — Apache intercepta la URL `/config` porque coincide con el nombre de la carpeta real, antes de que la reescritura a `proxy.php` actúe. La regla correcta es `<FilesMatch ".">Require all denied</FilesMatch>` (ver §8). Comprobar con `curl -o /dev/null -w "%{http_code}" https://tu-dominio/config/`.
+
+**401 en `/coupon/create` o `/coupon/list` desde el Admin**
+Se ha cerrado la sesión, o el `evento` no corresponde a una habitación de ESE hotel (se comprueba contra `habitaciones.json` — devuelve 403 en ese caso, no 401).
+
 ---
 
 ## 13. Pendientes / ideas de mejora
@@ -370,6 +401,9 @@ Verificar el número de habitación (solo dígitos, sin `ev-`). Comprobar que ex
 - [ ] Sustituir `hotel-logo.png` por el logo/monograma real del hotel (se reutiliza en cabecera móvil, cabecera del Monitor y badge de las fotos).
 - [ ] Si la entrega de e-mail por `mail()` resulta poco fiable en la práctica, valorar migrar a SMTP real.
 - [ ] PWA manifest para instalar la app móvil en pantalla de inicio.
+- [ ] Rotar el token de Square (estuvo hardcodeado en el código/historial de git hasta el 15 julio; ver `CURRENT_STATUS.md`) y confirmar que `config/square.json` está subido en producción.
+- [ ] Decidir si cada hotel debe tener sus propias credenciales de pago (Square/PayPal) en vez de una única cuenta compartida para todo el despliegue.
+- [ ] Sin límite de intentos en `/auth/login` (fuerza bruta) — valorar un lockout o retardo tras varios fallos.
 
 ---
 

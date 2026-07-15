@@ -156,22 +156,10 @@ function pbhSetSessionCookie($token, $ttl) {
     ]);
 }
 
-function getTextosFile($configDir, $eventCode = '') {
-    // Si hay un código de evento, usar archivo específico del evento
-    // Ejemplo: eventCode "1668042" → "textos_1668042.txt"
-    // Si no hay eventCode, usar archivo global "textos.txt" (backward compatibility)
-    if ($eventCode && trim($eventCode) !== '') {
-        // Sanitizar el eventCode para evitar directory traversal
-        $eventCode = preg_replace('/[^0-9a-zA-Z_-]/', '', $eventCode);
-        return $configDir . '/textos_' . $eventCode . '.txt';
-    }
-    return $configDir . '/textos.txt';
-}
-
-// Lee email_recepcion del textos.txt GLOBAL del despliegue: cada despliegue es UN hotel,
-// así que la recepción es única y el email vale para todas las habitaciones.
+// Lee email_recepcion del textos.txt del hotel: precios/textos/email son por-hotel,
+// no por habitación, así que un único email de recepción vale para todas sus habitaciones.
 function getHotelReceptionEmail($configDir) {
-    $textosFile = getTextosFile($configDir, '');
+    $textosFile = $configDir . '/textos.txt';
     // Limpiar caché de stat: sin esto, un textos.txt recién escrito por /config
     // (p. ej. segundos antes desde el panel Admin) puede parecer inexistente.
     clearstatcache(true, $textosFile);
@@ -345,6 +333,24 @@ function getPaypalCredentials($configDir) {
     return $credentials;
 }
 
+// Credenciales de Square: variables de entorno si existen, si no config/square.json
+// (fuera de git, protegido por config/.htaccess). Nunca hardcodeadas en el código.
+function getSquareCredentials($configDir) {
+    $accessToken = getenv('SQUARE_ACCESS_TOKEN') ?: '';
+    $locationId  = getenv('SQUARE_LOCATION_ID') ?: '';
+    if (!$accessToken || !$locationId) {
+        $file = $configDir . '/square.json';
+        if (file_exists($file)) {
+            $parsed = json_decode(file_get_contents($file), true);
+            if (is_array($parsed)) {
+                if (!$accessToken) $accessToken = $parsed['accessToken'] ?? '';
+                if (!$locationId)  $locationId  = $parsed['locationId'] ?? '';
+            }
+        }
+    }
+    return ['accessToken' => $accessToken, 'locationId' => $locationId];
+}
+
 function getCsrfToken() {
     global $PRINTBOX_BASE, $cookiePath;
     $ch = curl_init($PRINTBOX_BASE . '/sanctum/csrf-cookie');
@@ -403,10 +409,12 @@ function proxyPost($url, $data, $extraHeaders = []) {
 $body = file_get_contents('php://input');
 $data = json_decode($body, true) ?? [];
 
-// Log TODOS los requests para debuggear
-@file_put_contents(__DIR__ . '/pba_requests.log', 
-    date('Y-m-d H:i:s') . " {$_SERVER['REQUEST_METHOD']} {$_SERVER['REQUEST_URI']} " . 
-    "Content-Length:" . ($_SERVER['CONTENT_LENGTH'] ?? '0') . " Body:" . substr($body, 0, 200) . "\n", 
+// Log TODOS los requests para debuggear — el body de /auth/* nunca se loguea
+// (llevaría la contraseña en texto plano).
+$__logBody = (strpos($uri, '/auth/') === 0) ? '[redacted]' : substr($body, 0, 200);
+@file_put_contents(__DIR__ . '/pba_requests.log',
+    date('Y-m-d H:i:s') . " {$_SERVER['REQUEST_METHOD']} {$_SERVER['REQUEST_URI']} " .
+    "Content-Length:" . ($_SERVER['CONTENT_LENGTH'] ?? '0') . " Body:" . $__logBody . "\n",
     FILE_APPEND);
 
 header('Content-Type: application/json');
@@ -727,56 +735,6 @@ if ($uri === '/config' && $_SERVER['REQUEST_METHOD'] === 'POST') {
     exit();
 }
 
-// ── /debug/config (para ver qué está en el archivo) ──
-if ($uri === '/debug/config' || $uri === '/debug/config/') {
-    $configDir = getConfigDir();
-    $textosFile = $configDir . '/textos.txt';
-    $logFile = $configDir . '/debug.log';
-    
-    $result = [
-        'configDir' => $configDir,
-        'textosFile' => $textosFile,
-        'fileExists' => file_exists($textosFile),
-        'isWritable' => is_writable($configDir),
-        'rawContent' => file_exists($textosFile) ? file_get_contents($textosFile) : 'archivo no existe',
-        'lastLog' => file_exists($logFile) ? implode("\n", array_slice(file($logFile, FILE_IGNORE_NEW_LINES), -5)) : 'sin logs',
-    ];
-    
-    // Como JSON devolvemos lo que está en el archivo
-    if (file_exists($textosFile)) {
-        $lines = file($textosFile, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
-        $result['parsed'] = [];
-        $keyMap = ['es' => 'text_es', 'en' => 'text_en', 'fr' => 'text_fr', 'de' => 'text_de'];
-        foreach ($lines as $line) {
-            $parts = explode(':', $line, 2);
-            $shortKey = trim($parts[0]);
-            $val = trim($parts[1] ?? '');
-            $key = isset($keyMap[$shortKey]) ? $keyMap[$shortKey] : $shortKey;
-            $result['parsed'][$key] = $val;
-        }
-    }
-    
-    echo json_encode($result, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
-    exit();
-}
-
-// ── /reset-config (restaurar valores por defecto) ──
-if ($uri === '/reset-config' || $uri === '/reset-config/') {
-    $configDir = getConfigDir();
-    if (!is_dir($configDir)) {
-        mkdir($configDir, 0755, true);
-    }
-    
-    $defaultContent = "es:¡Consigue tu foto del evento!\nen:Get your event photo!\nfr:Obtenez votre photo!\nde:Hol dir dein Foto!\nprecio1:5\nprecio2:9\nprecio3:12\nempresa:Printbox Adventure";
-    
-    file_put_contents($configDir . '/textos.txt', $defaultContent);
-    @file_put_contents($configDir . '/debug.log', date('Y-m-d H:i:s') . " RESET /reset-config\n", FILE_APPEND);
-    clearstatcache();
-    
-    echo json_encode(['ok' => true, 'message' => 'Config restaurada a valores por defecto']);
-    exit();
-}
-
 // ── /print/* (simulados) ──
 if ($uri === '/print/count')    { echo json_encode(['count' => 0]);          exit(); }
 if ($uri === '/print/printers') { echo json_encode(['printers' => []]);       exit(); }
@@ -939,11 +897,16 @@ if (strpos($uri, '/proxy-image/') === 0) {
 if ($uri === '/process-payment') {
     $data = json_decode(file_get_contents('php://input'), true);
 
-    $SQUARE_ACCESS_TOKEN = getenv('SQUARE_ACCESS_TOKEN') ?: 'EAAAl0j_Yx8fE69GiPLm7N3hmvuLAD2h6uRIaKomqSVfInluHW9gzA0twdKLPrn8';
-    $SQUARE_LOCATION_ID = getenv('SQUARE_LOCATION_ID') ?: 'LHB32XGQK68GX';
+    $square = getSquareCredentials(getConfigDir());
+    if (!$square['accessToken']) {
+        http_response_code(500);
+        echo json_encode(['error' => 'Square no configurado en el servidor']);
+        exit();
+    }
+    $SQUARE_ACCESS_TOKEN = $square['accessToken'];
 
     $amount = isset($data['amount']) ? intval($data['amount']) : 0;  // Ya viene en centavos desde el viewer
-    $location = $data['location_id'] ?? $SQUARE_LOCATION_ID;
+    $location = $data['location_id'] ?? $square['locationId'];
 
     if (!$data['token'] || $amount <= 0) {
         http_response_code(400);
@@ -961,10 +924,6 @@ if ($uri === '/process-payment') {
         "location_id" => $location
     ]);
 
-    // Log de petición para debuggear
-    $configDir = getConfigDir();
-    @file_put_contents($configDir . '/debug.log', date('Y-m-d H:i:s') . " POST /process-payment Request: " . $payload . "\n", FILE_APPEND);
-
     $url = "https://connect.squareup.com/v2/payments";
     $ch = curl_init($url);
     curl_setopt($ch, CURLOPT_HTTPHEADER, [
@@ -978,9 +937,6 @@ if ($uri === '/process-payment') {
     $response = curl_exec($ch);
     $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
     curl_close($ch);
-
-    // Log de respuesta de Square para debuggear
-    @file_put_contents($configDir . '/debug.log', date('Y-m-d H:i:s') . " POST /process-payment Response: HTTP $httpCode " . substr($response, 0, 500) . "\n", FILE_APPEND);
 
     http_response_code($httpCode ?: 500);
     echo $response;
@@ -1086,14 +1042,19 @@ if ($uri === '/paypal/capture-order') {
 }
 
 // Ruta antigua: /proxy.php?route=process-payment (deprecated, kept for backward compatibility)
-if ($_GET['route'] === 'process-payment') {
+if (($_GET['route'] ?? '') === 'process-payment') {
     $data = json_decode(file_get_contents('php://input'), true);
 
-    $SQUARE_ACCESS_TOKEN = getenv('SQUARE_ACCESS_TOKEN') ?: 'EAAAl0j_Yx8fE69GiPLm7N3hmvuLAD2h6uRIaKomqSVfInluHW9gzA0twdKLPrn8';
-    $SQUARE_LOCATION_ID = getenv('SQUARE_LOCATION_ID') ?: 'LHB32XGQK68GX';
+    $square = getSquareCredentials(getConfigDir());
+    if (!$square['accessToken']) {
+        http_response_code(500);
+        echo json_encode(['error' => 'Square no configurado en el servidor']);
+        exit();
+    }
+    $SQUARE_ACCESS_TOKEN = $square['accessToken'];
 
     $amount = isset($data['amount']) ? intval($data['amount']) : 0;  // Ya viene en centavos desde el viewer
-    $location = $data['location_id'] ?? $SQUARE_LOCATION_ID;
+    $location = $data['location_id'] ?? $square['locationId'];
 
     if (!$data['token'] || $amount <= 0) {
         http_response_code(400);
@@ -1134,14 +1095,34 @@ if ($_GET['route'] === 'process-payment') {
 // ── SISTEMA DE CUPONES ────────────────────────────────────────────────────
 // ══════════════════════════════════════════════════════════════════════════
 
-// Clave secreta para firmar los códigos. Cámbiala y guárdala en secreto.
-define('COUPON_SECRET', 'pba_s3cr3t_k3y_2026');
+// Clave secreta para firmar los códigos: aleatoria, generada una vez y guardada en
+// config/coupon_secret.txt (fuera de git, protegida por config/.htaccess). Nunca
+// hardcodeada en el código fuente.
+function getCouponSecret() {
+    $base = getConfigDir();
+    $f = $base . '/coupon_secret.txt';
+    if (is_file($f)) { $s = trim(@file_get_contents($f)); if ($s !== '') return $s; }
+    $secret = bin2hex(random_bytes(32));
+    if (!is_dir($base)) @mkdir($base, 0755, true);
+    @file_put_contents($f, $secret);
+    return $secret;
+}
 
 /**
  * Normaliza el código de evento (quita prefijo ev- / ev_)
  */
 function normalizeCouponEvent($code) {
     return preg_replace('/^ev[-_]?/i', '', trim($code));
+}
+
+// Comprueba que $evento es una habitación registrada del hotel de la sesión — evita que
+// el admin de un hotel genere/liste cupones para el evento de otro hotel.
+function hotelOwnsRoom($base, $hotelId, $evento) {
+    $habitaciones = readHabitaciones(resolveHotelDir($base, $hotelId));
+    foreach ($habitaciones as $h) {
+        if (($h['codigo'] ?? '') === $evento) return true;
+    }
+    return false;
 }
 
 /**
@@ -1187,7 +1168,7 @@ function writeCoupons($file, $coupons) {
  */
 function generateCouponCode() {
     $random = strtoupper(bin2hex(random_bytes(3))); // 6 chars hex
-    $hmac   = strtoupper(substr(hash_hmac('sha256', $random, COUPON_SECRET), 0, 3));
+    $hmac   = strtoupper(substr(hash_hmac('sha256', $random, getCouponSecret()), 0, 3));
     return $random . '-' . $hmac;
 }
 
@@ -1205,7 +1186,7 @@ function verifyCouponCode($code) {
     if (!$isLegacy && !$isShort) return false;
 
     $expectedLength = $isLegacy ? 4 : 3;
-    $expected = strtoupper(substr(hash_hmac('sha256', $random, COUPON_SECRET), 0, $expectedLength));
+    $expected = strtoupper(substr(hash_hmac('sha256', $random, getCouponSecret()), 0, $expectedLength));
     return hash_equals($expected, $hmac);
 }
 
@@ -1258,11 +1239,20 @@ function logCouponUsage($evento, $code, $amount, $action) {
     @file_put_contents($logFile, $line, FILE_APPEND | LOCK_EX);
 }
 
-// ── POST /coupon/create (Solo admin) ──────────────────────────────────────
+// ── POST /coupon/create (Solo admin autenticado del hotel) ────────────────
 if ($uri === '/coupon/create' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+    $base = getConfigDir();
+    $sessionHotelId = getSessionHotelId($base);
+    if (!$sessionHotelId) {
+        http_response_code(401);
+        echo json_encode(['error' => 'No autenticado']);
+        exit();
+    }
+
     $evento = normalizeCouponEvent($data['evento'] ?? '');
     $amount = intval($data['amount'] ?? 0); // en céntimos (ej: 500 = 5.00€)
     $expiresIn = intval($data['expires_hours'] ?? 72); // horas hasta caducar, default 72h
+    $type = ($data['type'] ?? 'discount') === 'full' ? 'full' : 'discount';
 
     if (!$evento) {
         http_response_code(400);
@@ -1274,15 +1264,21 @@ if ($uri === '/coupon/create' && $_SERVER['REQUEST_METHOD'] === 'POST') {
         echo json_encode(['error' => 'amount debe ser mayor que 0 (en céntimos)']);
         exit();
     }
+    if (!hotelOwnsRoom($base, $sessionHotelId, $evento)) {
+        http_response_code(403);
+        echo json_encode(['error' => 'Esa habitación no pertenece a tu hotel']);
+        exit();
+    }
 
     $code = generateCouponCode();
     $now  = time();
 
     $couponFile = getCouponFile($evento);
-    withCouponLock($couponFile, function($lockFile) use ($code, $amount, $now, $expiresIn) {
+    withCouponLock($couponFile, function($lockFile) use ($code, $amount, $now, $expiresIn, $type) {
         $coupons = readCoupons($lockFile);
         $coupons[$code] = [
             'amount'     => $amount,
+            'type'       => $type,
             'status'     => 'active',
             'created_at' => date('c', $now),
             'expires_at' => date('c', $now + ($expiresIn * 3600)),
@@ -1299,6 +1295,7 @@ if ($uri === '/coupon/create' && $_SERVER['REQUEST_METHOD'] === 'POST') {
         'ok'     => true,
         'code'   => $code,
         'amount' => $amount,
+        'type'   => $type,
         'amount_eur' => number_format($amount / 100, 2, '.', '') . '€',
         'expires_at' => date('c', $now + ($expiresIn * 3600)),
     ]);
@@ -1349,6 +1346,7 @@ if ($uri === '/coupon/validate' && $_SERVER['REQUEST_METHOD'] === 'POST') {
     echo json_encode([
         'valid'      => true,
         'amount'     => $coupon['amount'],
+        'type'       => $coupon['type'] ?? 'discount',
         'amount_eur' => number_format($coupon['amount'] / 100, 2, '.', '') . '€',
         'expires_at' => $coupon['expires_at'],
     ]);
@@ -1421,11 +1419,24 @@ if ($uri === '/coupon/redeem' && $_SERVER['REQUEST_METHOD'] === 'POST') {
 
 // ── GET /coupon/list (Panel admin — lista cupones de un evento) ────────────
 if ($uri === '/coupon/list' && $_SERVER['REQUEST_METHOD'] === 'GET') {
+    $base = getConfigDir();
+    $sessionHotelId = getSessionHotelId($base);
+    if (!$sessionHotelId) {
+        http_response_code(401);
+        echo json_encode(['error' => 'No autenticado']);
+        exit();
+    }
+
     $evento = normalizeCouponEvent($_GET['evento'] ?? '');
 
     if (!$evento) {
         http_response_code(400);
         echo json_encode(['error' => 'evento requerido']);
+        exit();
+    }
+    if (!hotelOwnsRoom($base, $sessionHotelId, $evento)) {
+        http_response_code(403);
+        echo json_encode(['error' => 'Esa habitación no pertenece a tu hotel']);
         exit();
     }
 

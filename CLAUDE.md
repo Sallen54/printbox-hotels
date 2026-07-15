@@ -102,6 +102,12 @@ Login por hotel con cookie firmada HMAC (sin BD). Helpers compartidos en [backen
 
 Square (Web Payments SDK en el cliente, `/process-payment` en `backend/server.js` llamando a `connect.squareupsandbox.com` — endpoint de *sandbox*) y PayPal (`createPayPalOrder`/`capturePayPalOrder`/`getPayPalConfig` en `src/shared/api.js`, respaldado por `config/paypal.json`, en gitignore — ver `config/paypal.example.json`). Apple Pay / Google Pay no están implementados (y a diferencia de Adventures, aquí no se ha copiado el fichero de verificación de dominio de Apple Pay — habría que añadirlo de cero si algún día se implementa, apuntando al dominio real de Hotels).
 
+Credenciales de Square: variable de entorno o, si no, `config/square.json` (gitignored — ver `config/square.example.json`). **Nunca hardcodees un token de acceso real en el código** — hasta el 15 julio hubo uno hardcodeado como fallback en `proxy.php` y `backend/server.js`; quedó expuesto en el historial de git y hubo que rotarlo.
+
+### Cupones (`/coupon/*`)
+
+Descuento o pago completo por habitación, firmados con HMAC (`config/coupon_secret.txt`, se genera solo) para que no se puedan falsificar. **`create` y `list` exigen sesión del hotel Y que la `evento` sea una habitación de ESE hotel** (`hotelOwnsRoom()` en `proxy.php`, contra `habitaciones.json`) — hasta el 15 julio no exigían ni sesión, así que cualquiera podía generar cupones de pago completo para cualquier habitación sin login; si tocas estas rutas, no quites esa comprobación. `validate`/`redeem` sí son públicas (las llama el huésped sin login) porque la firma HMAC ya impide inventarse un código. El campo `type` (`'discount'` o `'full'`) hay que guardarlo y devolverlo siempre en `create`/`validate` — el frontend (`ViewerApp.jsx`/`MobileApp.jsx`) ya calcula el descuento/bypass de pago a partir de ese campo; si falta, el cupón no tiene ningún efecto real en el precio (bug real que hubo hasta el 15 julio).
+
 ### Modelo de persistencia
 
 No hay base de datos en este repo. El estado o bien se proxea hacia la API externa de Laravel (habitaciones/fotos/pedidos), o vive en ficheros de configuración planos bajo `config/`, o en `localStorage` del navegador en MobileApp/ViewerApp (fotos seleccionadas, capturas de cámara, paso/página actual, código de habitación) para que una recarga de página o un nuevo escaneo de QR retome donde el huésped lo dejó.
