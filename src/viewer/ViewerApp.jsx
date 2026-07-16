@@ -579,6 +579,10 @@ export default function ViewerApp() {
     )
   }
 
+  const currentRoomCode = (config?.evento || '').replace(/^ev-/, '')
+  const currentRoom = habitaciones.find(h => h.codigo === currentRoomCode)
+  const currentRoomLabel = currentRoom?.nombre || (currentRoomCode ? `Hab. ${currentRoomCode}` : 'Habitación')
+
   return (
     <div className="viewer-app d-flex flex-column bg-dark text-light" style={{ height: "100vh", overflow: "hidden" }}>
       {/* Asistente de primera configuración: nombre del hotel → logo → habitaciones */}
@@ -810,7 +814,7 @@ export default function ViewerApp() {
                         {[1,2,3].map(n => (
                           <button key={n} className={`btn fw-bold copy-btn ${copies === n ? 'copy-btn-active' : 'copy-btn-inactive'}`} onClick={() => setCopies(n)}>
                             <span>{copies === n ? <i className="bi bi-check-circle-fill copy-icon" /> : <i className="bi bi-circle copy-icon" />}{n} {n === 1 ? 'copia' : 'copias'}</span>
-                            {textos?.[`precio${n}`] && <span className={`badge ${copies === n ? 'copy-price-badge-active' : 'copy-price-badge-inactive'}`}>{textos[`precio${n}`]}€</span>}
+                            {textos?.[`precio${n}`] && <span className={`badge copy-price-badge ${copies === n ? 'copy-price-badge-active' : 'copy-price-badge-inactive'}`}>{textos[`precio${n}`]}€</span>}
                           </button>
                         ))}
                       </div>
@@ -864,49 +868,44 @@ export default function ViewerApp() {
       {/* Header y galería */}
       <header className="viewer-header">
         <div className="viewer-header-top">
-          <div className="viewer-header-lang-block">
-            <div className="viewer-header-lang-icon"><i className="bi bi-compass" /></div>
-            <div className="viewer-header-lang-text">
-              <span>🇪🇸 ¡Reserva tus fotos del hotel!</span>
-              <span>🇬🇧 Book your hotel photos!</span>
-            </div>
+          <div className="viewer-header-status">
+            {uuid && (
+              <>
+                <span className="status-dot" />
+                <span className="status-text">EN ESCUCHA · {allPhotos.length} FOTOS</span>
+              </>
+            )}
           </div>
           <div className="viewer-header-brand-center">
             <img src={logoSrc} alt="Logo del hotel" className="header-logo-center" />
             {textos?.empresa && <div className="header-hotel-name">{textos.empresa}</div>}
+            {uuid && <div className="header-hotel-subtitle">MONITOR · {currentRoomLabel}</div>}
           </div>
-          <div className="viewer-header-lang-block viewer-header-lang-block-right">
-            <div className="viewer-header-lang-text text-end">
-              <span>🇫🇷 Réservez vos photos d'hôtel !</span>
-              <span>🇩🇪 Buchen Sie Ihre Hotel-Fotos!</span>
-            </div>
-            <div className="viewer-header-lang-icon"><i className="bi bi-globe2" /></div>
+          <div className="viewer-header-right">
+            {uuid && (
+              <div className="viewer-header-actions">
+                {config?.servicio_disponible === false && (
+                  <span className="badge service-disabled-badge"><i className="bi bi-exclamation-triangle-fill me-1" />Servicio desactivado para los huéspedes</span>
+                )}
+                <button className="btn btn-sm header-action-btn" onClick={() => setShowEventModal(true)} title="Cambiar la habitación que muestra el monitor"><i className="bi bi-door-open me-1" />{currentRoomLabel}</button>
+                <button className={`btn btn-sm header-action-btn ${autoplay ? 'header-action-btn-active' : ''}`} onClick={() => setAutoplay(!autoplay)} title={autoplay ? 'Detener autoplay' : 'Iniciar autoplay (15s por página)'}><i className={`bi ${autoplay ? 'bi-pause-circle-fill' : 'bi-play-circle-fill'} me-1`} />{autoplay ? 'Autoplay ON' : 'Autoplay'}</button>
+                <button className="btn btn-sm header-action-btn" onClick={() => setQrRoom(currentRoom || { nombre: '', codigo: currentRoomCode })} title="Mostrar QR de la habitación actual"><i className="bi bi-qr-code me-1" />Ver QR</button>
+                <button className="btn btn-sm header-action-btn" onClick={() => setShowPrivacyModal(true)}><i className="bi bi-info-circle me-1" /> Términos</button>
+                <button className="btn btn-sm header-action-btn" onClick={openAdmin}><i className="bi bi-gear me-1" /> Admin</button>
+                <button className="btn btn-sm header-action-btn" onClick={handleLogout} title={`Sesión: ${session?.nombre || session?.hotelId || ''}`}><i className="bi bi-box-arrow-right me-1" /> Salir</button>
+                <button className="btn btn-sm header-action-btn" onClick={() => loadAllPhotos(currentPage)} disabled={loading}><i className={`bi ${loading ? 'bi-hourglass-split spin' : 'bi-arrow-repeat'} me-1`} />{loading ? 'Cargando...' : 'Actualizar'}</button>
+              </div>
+            )}
           </div>
         </div>
-        {uuid && (
-          <div className="viewer-header-inner">
-            <div className="viewer-header-actions">
-              {config?.servicio_disponible === false && (
-                <span className="badge service-disabled-badge"><i className="bi bi-exclamation-triangle-fill me-1" />Servicio desactivado para los huéspedes</span>
-              )}
-              <button className="btn btn-sm header-action-btn" onClick={() => setShowEventModal(true)} title="Cambiar la habitación que muestra el monitor"><i className="bi bi-door-open me-1" />{(() => { const code = (config?.evento || '').replace(/^ev-/, ''); const r = habitaciones.find(h => h.codigo === code); return r?.nombre || (code ? `Hab. ${code}` : 'Habitación') })()}</button>
-              <button className={`btn btn-sm header-action-btn ${autoplay ? 'header-action-btn-active' : ''}`} onClick={() => setAutoplay(!autoplay)} title={autoplay ? 'Detener autoplay' : 'Iniciar autoplay (15s por página)'}><i className={`bi ${autoplay ? 'bi-pause-circle-fill' : 'bi-play-circle-fill'} me-1`} />{autoplay ? 'Autoplay ON' : 'Autoplay'}</button>
-              <button className="btn btn-sm header-action-btn" onClick={() => { const code = (config?.evento || '').replace(/^ev-/, ''); const r = habitaciones.find(h => h.codigo === code); setQrRoom(r || { nombre: '', codigo: code }) }} title="Mostrar QR de la habitación actual"><i className="bi bi-qr-code me-1" />Ver QR</button>
-              <button className="btn btn-sm header-action-btn" onClick={() => setShowPrivacyModal(true)}><i className="bi bi-info-circle me-1" /> Términos</button>
-              <button className="btn btn-sm header-action-btn" onClick={openAdmin}><i className="bi bi-gear me-1" /> Admin</button>
-              <button className="btn btn-sm header-action-btn" onClick={handleLogout} title={`Sesión: ${session?.nombre || session?.hotelId || ''}`}><i className="bi bi-box-arrow-right me-1" /> Salir</button>
-              <button className="btn btn-sm header-action-btn" onClick={() => loadAllPhotos(currentPage)} disabled={loading}><i className={`bi ${loading ? 'bi-hourglass-split spin' : 'bi-arrow-repeat'} me-1`} />{loading ? 'Cargando...' : 'Actualizar'}</button>
-            </div>
-          </div>
-        )}
         {error && <div className="alert alert-danger viewer-error-alert">{error}</div>}
       </header>
       {qrRoom && (
-        <div className="modal d-block" style={{ backgroundColor: 'rgba(0,0,0,0.7)', zIndex: 1080 }} tabIndex="-1" onClick={() => setQrRoom(null)}>
+        <div className="modal d-block event-modal-overlay" style={{ zIndex: 1080 }} tabIndex="-1" onClick={() => setQrRoom(null)}>
           <div className="modal-dialog modal-dialog-centered" onClick={e => e.stopPropagation()}>
-            <div className="modal-content bg-dark border border-secondary">
+            <div className="modal-content bg-dark border border-secondary event-modal">
               <div className="modal-body text-center p-5">
-                <h5 className="text-light mb-1">{qrRoom.nombre || 'Habitación'}</h5>
+                <h5 className="event-modal-title mb-1">{qrRoom.nombre || 'Habitación'}</h5>
                 <p className="text-secondary font-mono mb-4" style={{ fontSize: '12px' }}>ev-{qrRoom.codigo}</p>
                 <div style={{ display: 'flex', justifyContent: 'center', backgroundColor: 'white', padding: '15px', borderRadius: '8px' }}>
                   <QRCodeSVG value={`${window.location.origin}/mobile?hotel=${encodeURIComponent(session?.hotelId || '')}&habitacion=${qrRoom.codigo}`} size={300} level="H" includeMargin={true} />
@@ -926,9 +925,15 @@ export default function ViewerApp() {
         ) : allPhotos.length === 0 ? (
           <div className="viewer-gallery-empty"><img src={logoSrc} alt="Logo" className="empty-logo" /><h2 className="empty-title">{textos?.empresa || 'Printbox Hotels'}</h2><p className="empty-text">Esperando fotos…</p></div>
         ) : (
-          <div className="viewer-gallery-grid">
-            {allPhotos.map(photo => <PhotoCard key={photo.id || photo.uri} photo={photo} onSelect={handleSelectPhoto} logoSrc={logoSrc} />)}
-          </div>
+          <>
+            <div className="viewer-gallery-header">
+              <h3 className="gallery-title">Fotos de {currentRoomLabel}</h3>
+              <span className="gallery-hint">CLIC EN UNA FOTO PARA IMPRIMIR</span>
+            </div>
+            <div className="viewer-gallery-grid">
+              {allPhotos.map(photo => <PhotoCard key={photo.id || photo.uri} photo={photo} onSelect={handleSelectPhoto} logoSrc={logoSrc} />)}
+            </div>
+          </>
         )}
       </main>
       {lastPage > 1 && (
@@ -942,11 +947,11 @@ export default function ViewerApp() {
       )}
       <footer className="viewer-footer">
         <div className="viewer-footer-content">
-          {textos?.precio1 && <span className="price-badge"><span className="text-secondary me-1">1 foto</span><span className="badge bg-warning text-dark fw-bold fs-6">{textos.precio1}€</span></span>}
-          {textos?.precio2 && <span className="price-badge"><span className="text-secondary me-1">2 fotos</span><span className="badge bg-warning text-dark fw-bold fs-6">{textos.precio2}€</span></span>}
-          {textos?.precio3 && <span className="price-badge"><span className="text-secondary me-1">3 fotos</span><span className="badge bg-warning text-dark fw-bold fs-6">{textos.precio3}€</span></span>}
-          {textos?.empresa && <span className="company-name"><i className="bi bi-camera me-1" />{textos.empresa}</span>}
-          <span className="print-count"><i className="bi bi-printer me-1" /><span className="print-count-number">{printCount}</span> impresiones</span>
+          {textos?.precio1 && <span className="price-badge">1 FOTO <span className="badge">{textos.precio1}€</span></span>}
+          {textos?.precio2 && <span className="price-badge">2 FOTOS <span className="badge">{textos.precio2}€</span></span>}
+          {textos?.precio3 && <span className="price-badge">3+ FOTOS <span className="badge">{textos.precio3}€</span></span>}
+          {textos?.empresa && <span className="company-name">{textos.empresa}</span>}
+          <span className="print-count">IMPRESAS HOY <span className="print-count-number">{printCount}</span></span>
         </div>
       </footer>
     </div>
