@@ -72,7 +72,7 @@ router.get('/', (req, res) => {
           const colonIndex = line_trimmed.indexOf(':')
           const key = line_trimmed.substring(0, colonIndex).trim()
           const val = line_trimmed.substring(colonIndex + 1).trim()
-          // Map by key name, not by line index
+          // textos.txt se parsea por nombre de clave, no por posición de línea
           if (key === 'text_es' || key === 'es') textos['text_es'] = val
           else if (key === 'text_en' || key === 'en') textos['text_en'] = val
           else if (key === 'text_fr' || key === 'fr') textos['text_fr'] = val
@@ -136,7 +136,6 @@ router.post('/', (req, res) => {
       fs.writeFileSync(path.join(CONFIG_DIR, 'textos.txt'), lines.join('\n'))
     }
 
-    // Devolver los valores guardados (igual que GET)
     const textosFile = path.join(CONFIG_DIR, 'textos.txt')
     const textosResponse = { text_es: '', text_en: '', text_fr: '', text_de: '', precio1: '', precio2: '', precio3: '', empresa: '', email_recepcion: '' }
     if (fs.existsSync(textosFile)) {

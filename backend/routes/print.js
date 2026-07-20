@@ -15,7 +15,6 @@ function getDataDir(req) {
     path.join(os.homedir(), 'AppData', 'Local', 'PrintboxHotels')
 }
 
-// GET /print/printers
 router.get('/printers', async (_req, res) => {
   try {
     const { getPrinters } = require('pdf-to-printer')
@@ -26,7 +25,6 @@ router.get('/printers', async (_req, res) => {
   }
 })
 
-// GET /print/count
 router.get('/count', (req, res) => {
   try {
     const logPath = req.app.locals.logPath ||
@@ -38,11 +36,9 @@ router.get('/count', (req, res) => {
   }
 })
 
-// POST /print/job
 router.post('/job', async (req, res) => {
   const { imageUrl, imageName, printer, delay = 5 } = req.body
 
-  // Añadir a la cola y procesar
   printQueue.push({ req, res, imageUrl, imageName, printer, delay })
   processQueue(req.app)
 })
@@ -61,7 +57,11 @@ async function processQueue(app) {
   fs.ensureDirSync(descargasDir)
   fs.ensureDirSync(pdfDir)
 
-  // Usar nombre único para evitar colisiones cuando hay múltiples jobs simultáneos
+  // Descargar imagen → esperar el delay configurado → PDF con pdfkit → impresora.
+  // Limitación conocida (ver ORIENTATION_AND_SIZE_GUIDE.md): el PDF siempre sale A4;
+  // el tamaño configurado (10x15 / 15x20) no se tiene en cuenta.
+  //
+  // Nombre único para evitar colisiones cuando hay varios trabajos seguidos.
   const uniqueSuffix = Date.now().toString(36) + Math.random().toString(36).substr(2, 5)
   const ext = path.extname(imageName)
   const baseName = path.basename(imageName, ext)
@@ -70,24 +70,19 @@ async function processQueue(app) {
   const pdfPath = path.join(pdfDir, uniqueImageName.replace(ext, '.pdf'))
 
   try {
-    // 1. Descargar imagen
     const imgRes = await fetch(imageUrl)
     if (!imgRes.ok) throw new Error(`No se pudo descargar la imagen: ${imgRes.status}`)
     const buffer = await imgRes.buffer()
     fs.writeFileSync(imagePath, buffer)
 
-    // 2. Delay
     await new Promise(r => setTimeout(r, delay * 1000))
 
-    // 3. Convertir a PDF
     await convertImageToPdf(imagePath, pdfPath)
 
-    // 4. Imprimir
     const { print } = require('pdf-to-printer')
     const options = printer ? { printer } : {}
     await print(pdfPath, options)
 
-    // 5. Incrementar contador
     const current = parseInt(fs.readFileSync(logPath, 'utf8')) || 0
     const newCount = current + 1
     fs.writeFileSync(logPath, String(newCount))
@@ -97,7 +92,6 @@ async function processQueue(app) {
     res.status(500).json({ error: err.message })
   } finally {
     isProcessing = false
-    // Procesar siguiente en cola
     processQueue(app)
   }
 }

@@ -6,7 +6,10 @@ const fetchCookieModule = require('fetch-cookie')
 const fetchCookie = fetchCookieModule.default || fetchCookieModule
 const sharp = require('sharp')
 
-const BASE = 'http://gestion.printboxweb.com'
+// Por aquí viajan fotos en base64, teléfonos y códigos OTP. En prod proxy.php ya
+// sondea HTTPS y lo usa si el certificado es válido; aquí (solo dev) se deja HTTP por
+// compatibilidad, pero se puede forzar con PRINTBOX_BASE=https://gestion.printboxweb.com
+const BASE = process.env.PRINTBOX_BASE || 'http://gestion.printboxweb.com'
 
 // CookieJar compartido — mantiene la sesión y el token CSRF entre peticiones
 const cookieJar = new tough.CookieJar()
@@ -47,7 +50,6 @@ async function postWithCsrf(url, body) {
   })
 }
 
-// POST /printbox/find-event  →  POST /api/v1/events/find
 router.post('/find-event', async (req, res) => {
   try {
     const { code } = req.body
@@ -62,7 +64,6 @@ router.post('/find-event', async (req, res) => {
   }
 })
 
-// POST /printbox/photos?page=N  →  POST /api/v1/events/photos?page=N&limit=20
 router.post('/photos', async (req, res) => {
   try {
     const page = req.query.page || 1
@@ -71,7 +72,6 @@ router.post('/photos', async (req, res) => {
     const data = await r.json()
     console.log(`[printbox] photos page=${page} → ${r.status}`)
     if (!r.ok) return res.status(r.status).json({ error: data })
-    // Limit to 20 photos per page
     if (data.data) data.data = data.data.slice(0, 20)
     res.json(data)
   } catch (err) {
@@ -106,7 +106,6 @@ async function downloadImageAsDataUrl(url) {
   }
 }
 
-// POST /printbox/photos-to-print  →  POST /api/v1/events/photos_two
 router.post('/photos-to-print', async (req, res) => {
   try {
     const { event } = req.body
@@ -121,7 +120,6 @@ router.post('/photos-to-print', async (req, res) => {
   }
 })
 
-// POST /printbox/otp/request → POST /api/v1/otp/generate
 router.post('/otp/request', async (req, res) => {
   try {
     const { phone, phone_country } = req.body
@@ -136,7 +134,6 @@ router.post('/otp/request', async (req, res) => {
   }
 })
 
-// POST /printbox/otp/validate → POST /api/v1/otp/validate
 router.post('/otp/validate', async (req, res) => {
   try {
     const { phone, phone_country, crypt_otp } = req.body
@@ -151,10 +148,6 @@ router.post('/otp/validate', async (req, res) => {
   }
 })
 
-
-module.exports = router
-
-// POST /printbox/photo-send  →  POST /api/v1/events/photo/send
 router.post('/photo-send', async (req, res) => {
   try {
     const { event, image, times = 1, name, phone, print, orientation } = req.body
@@ -168,7 +161,6 @@ router.post('/photo-send', async (req, res) => {
     if (phone) payload.phone = phone
     if (orientation) payload.orientation = orientation
 
-    // Obtener token CSRF y hacer la petición con cookies
     const csrfToken = await getCsrfToken()
     const r = await fetchWithCookies(`${BASE}/api/v1/events/photo/send`, {
       method: 'POST',
@@ -198,3 +190,5 @@ router.post('/notify-order', async (req, res) => {
     `Copias: ${items.map(i => i.copies).join(', ')}. [DEV] No se envía e-mail real, solo se loguea.`)
   res.json({ ok: true, devStub: true })
 })
+
+module.exports = router

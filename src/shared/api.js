@@ -1,12 +1,9 @@
-// Detecta si estamos en local (Electron/dev) o en producción (IONOS)
-// En Electron: siempre usar localhost:4000 para todo (viewer, mobile, printer)
-// En localhost web: http://localhost:4000 para TODO (viewer, mobile) - mismo backend para sincronizar config
-// En producción IONOS: rutas relativas para proxy.php (todos los apps)
+// En dev todo va al Express de :4000; en producción se usan rutas relativas para que
+// las reescrituras del .htaccess las lleven a proxy.php. (La rama de electronAPI es
+// herencia de Adventures: aquí no hay Electron y nunca se cumple.)
 const BACKEND_URL =
   window.electronAPI ? 'http://localhost:4000' :
-  (window.location.hostname === 'localhost' ? 'http://localhost:4000' :
-    '' // Producción: usar rutas relativas para proxy.php
-  )
+  (window.location.hostname === 'localhost' ? 'http://localhost:4000' : '')
 
 // En dev el panel corre en :3000 y el backend en :4000 (cross-origin): la cookie de
 // sesión solo viaja si las peticiones autenticadas usan credentials:'include'. En prod
@@ -221,9 +218,7 @@ export async function getConfig(hotelId = '') {
   try {
     const res = await fetch(url, CREDS)
     if (!res.ok) {
-      // Log the error but return defaults instead of throwing
       console.error(`GET /config returned ${res.status}, using defaults`)
-      // Return default config structure
       return {
         config: {
           servidor: 'http://gestion.printboxweb.com',
@@ -248,7 +243,6 @@ export async function getConfig(hotelId = '') {
     return data
   } catch (error) {
     console.error('Error fetching config:', error)
-    // Return defaults on network error
     return {
       config: {
         servidor: 'http://gestion.printboxweb.com',
@@ -296,12 +290,15 @@ export async function saveConfig(config, textos) {
   }
 }
 
-export async function createPayPalOrder({ amount, currency = 'EUR' }) {
+// `order` = { hotel, evento, copies: [n,...], coupon } → el servidor recalcula el
+// importe con los precios del hotel y rechaza el pago si no cuadra. Sin él el
+// importe lo decidiría el cliente. Ver pbhCheckAmountCents() en proxy.php.
+export async function createPayPalOrder({ amount, currency = 'EUR', order }) {
   const url = `${BACKEND_URL || ''}/paypal/create-order`
   const res = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ amount, currency }),
+    body: JSON.stringify({ amount, currency, order }),
   })
   const data = await res.json()
   if (!res.ok) {
@@ -337,26 +334,26 @@ export async function getPayPalConfig() {
   return data
 }
 
-export async function processPayment({ token, amount, currency = 'EUR', location_id }) {
+// location_id ya no se envía: lo pone el servidor desde config/square.json.
+// `order` viaja para que el servidor pueda recalcular el importe (ver arriba).
+export async function processPayment({ token, amount, currency = 'EUR', order }) {
   const url = `${BACKEND_URL || ''}/process-payment`
   try {
     const res = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ token, amount, currency, location_id }),
+      credentials: 'include',
+      body: JSON.stringify({ token, amount, currency, order }),
     })
     const data = await res.json()
     
-    // Log completo para debuggear
     console.log('Square response:', { status: res.status, ok: res.ok, data })
     
-    // Si hay errores en la respuesta de Square, lanzar excepción
     if (data?.errors) {
       const errMsg = data.errors.map(e => e.detail || e.message || JSON.stringify(e)).join(', ')
       throw new Error(`Square error: ${errMsg}`)
     }
     
-    // Si HTTP error, lanzar excepción
     if (!res.ok) {
       throw new Error(data?.error || `HTTP ${res.status}: ${JSON.stringify(data)}`)
     }

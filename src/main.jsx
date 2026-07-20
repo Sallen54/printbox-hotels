@@ -6,7 +6,6 @@ import PrinterApp from './printer/PrinterApp'
 import MobileApp from './mobile/MobileApp'
 import './styles/global.css'
 
-// Componente para redirigir según dispositivo
 function RedirectByDevice() {
   const navigate = useNavigate()
 

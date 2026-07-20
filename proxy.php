@@ -1,4 +1,18 @@
 <?php
+/*
+ * proxy.php — backend de PRODUCCIÓN (IONOS, hosting compartido sin Node).
+ *
+ * Reimplementa la misma superficie de API que backend/server.js + backend/routes/*
+ * porque Apache no puede ejecutar Express. Los dos no se generan uno del otro: se
+ * mantienen en paralelo A MANO. Si cambias el comportamiento de una ruta aquí,
+ * cámbialo también en backend/routes/, y al revés. Lo mismo al añadir una ruta nueva:
+ * hay que darla de alta además en .htaccess (RewriteRule) o Apache no llegará aquí.
+ *
+ * Rutas: /health, /auth/*, /config, /hotel-logo, /print/*, /printbox/*, /proxy-image/*,
+ * /process-payment, /paypal/*, /coupon/*.
+ *
+ * Sin base de datos: el estado vive en ficheros bajo config/ (uno por hotel).
+ */
 error_reporting(E_ALL);
 ini_set('display_errors', 0); // No mostrar errores en producción
 
@@ -7,8 +21,17 @@ ini_set('display_errors', 0); // No mostrar errores en producción
 // así que esto solo importa para dev cross-origin (localhost:3000 → :4000) y curl.
 $__origin = $_SERVER['HTTP_ORIGIN'] ?? '';
 if ($__origin !== '') {
-    header('Access-Control-Allow-Origin: ' . $__origin);
-    header('Access-Control-Allow-Credentials: true');
+    // Solo se refleja el propio dominio (el SPA es same-origin) y los orígenes de
+    // desarrollo en red local. Antes se reflejaba CUALQUIER origen de internet.
+    $__host  = $_SERVER['HTTP_HOST'] ?? '';
+    $__self  = ['http://' . $__host, 'https://' . $__host];
+    $__isDev = (bool) preg_match('#^https?://(localhost|127\.0\.0\.1|\[::1\]|10\.\d+\.\d+\.\d+|192\.168\.\d+\.\d+|172\.(1[6-9]|2\d|3[01])\.\d+\.\d+)(:\d+)?$#i', $__origin);
+    if (in_array($__origin, $__self, true) || $__isDev) {
+        header('Access-Control-Allow-Origin: ' . $__origin);
+        header('Access-Control-Allow-Credentials: true');
+        header('Vary: Origin');
+    }
+    // Origen desconocido → sin cabeceras CORS: el navegador bloquea la lectura.
 } else {
     header('Access-Control-Allow-Origin: *');
 }
@@ -16,13 +39,11 @@ header('Access-Control-Allow-Methods: GET, POST, OPTIONS, PUT, DELETE');
 header('Access-Control-Allow-Headers: Content-Type, X-Requested-With');
 header('Access-Control-Max-Age: 86400');
 
-// Responder a preflight requests
 if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
     http_response_code(200);
     exit();
 }
 
-// Headers anti-cache para config
 if (strpos($_SERVER['REQUEST_URI'], '/config') !== false || strpos($_SERVER['REQUEST_URI'], '/reset-config') !== false) {
     header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
     header('Pragma: no-cache');
@@ -34,19 +55,59 @@ $uri = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH);
 $uri = rtrim($uri, '/');
 if ($uri === '') $uri = '/';
 
-$PRINTBOX_BASE = 'http://gestion.printboxweb.com'; // ¡HTTP!
+// Base del backend Laravel. Por aquí viajan fotos completas en base64, teléfonos de
+// huéspedes y códigos OTP, así que se usa HTTPS siempre que el servidor lo soporte
+// con certificado válido. Como no se puede dar por hecho, se sondea una vez y se
+// cachea el resultado 1 hora en config/api_scheme.txt: si HTTPS responde, se usa; si
+// no, se sigue por HTTP igual que antes (nada se rompe). Se puede forzar con la
+// variable de entorno PRINTBOX_BASE.
+define('PBH_API_HOST', 'gestion.printboxweb.com');
+
+function pbhApiBase() {
+    static $cached = null;
+    if ($cached !== null) return $cached;
+
+    $env = getenv('PRINTBOX_BASE');
+    if ($env) return $cached = rtrim($env, '/');
+
+    $flagFile = getConfigDir() . '/api_scheme.txt';
+    if (file_exists($flagFile) && (time() - filemtime($flagFile)) < 3600) {
+        $scheme = trim(@file_get_contents($flagFile));
+        if ($scheme === 'https' || $scheme === 'http') return $cached = $scheme . '://' . PBH_API_HOST;
+    }
+    // Sin sitio donde cachear el resultado, sondear en cada petición saldría carísimo
+    // (hasta 5 s por request). En ese caso se deja el comportamiento de siempre.
+    if (!is_writable(getConfigDir())) return $cached = 'http://' . PBH_API_HOST;
+
+    $scheme = 'http';
+    $ch = curl_init('https://' . PBH_API_HOST . '/');
+    curl_setopt_array($ch, [
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_NOBODY         => true,
+        CURLOPT_TIMEOUT        => 5,
+        CURLOPT_CONNECTTIMEOUT => 4,
+        CURLOPT_SSL_VERIFYPEER => true,
+        CURLOPT_SSL_VERIFYHOST => 2,
+    ]);
+    curl_exec($ch);
+    if (curl_errno($ch) === 0) $scheme = 'https';
+    curl_close($ch);
+
+    @file_put_contents($flagFile, $scheme, LOCK_EX);
+    return $cached = $scheme . '://' . PBH_API_HOST;
+}
+
+$PRINTBOX_BASE = pbhApiBase();
 $cookiePath = __DIR__ . '/pba_cookies.txt'; // Guardar en la misma carpeta
 
 // ── Diagnóstico ──
 if ($uri === '/proxy.php') {
     header('Content-Type: application/json');
+    // Sin versión de PHP ni rutas absolutas del servidor: eran una ayuda gratis para
+    // quien busque exploits. Lo justo para saber si el proxy responde.
     echo json_encode([
-        'status'       => 'ok',
-        'php_version'  => PHP_VERSION,
-        'curl'         => function_exists('curl_init'),
-        'uri'          => $uri,
-        'tmp_writable' => is_writable(__DIR__),
-        'cookie_path'  => $cookiePath,
+        'status' => 'ok',
+        'curl'   => function_exists('curl_init'),
     ]);
     exit();
 }
@@ -58,7 +119,6 @@ if (!function_exists('curl_init')) {
     exit();
 }
 
-// ── Funciones helper ──
 
 function getConfigDir() {
     $scriptConfig = __DIR__ . '/config';
@@ -351,12 +411,163 @@ function getSquareCredentials($configDir) {
     return ['accessToken' => $accessToken, 'locationId' => $locationId];
 }
 
+// ── LÍMITE DE INTENTOS DE LOGIN ──
+// Contador por IP+usuario en config/login_attempts.json (protegido por
+// config/.htaccess). Sin BD: fichero con LOCK_EX, se auto-limpia por ventana.
+// Misma política en backend/lib/login-limiter.js (dev) — mantener a la par.
+
+define('PBH_LOGIN_MAX_FAILS', 5);
+define('PBH_LOGIN_WINDOW', 900);   // 15 min
+
+function pbhLoginKey($user) {
+    $ip = $_SERVER['REMOTE_ADDR'] ?? '0.0.0.0';
+    return substr(hash('sha256', $ip . '|' . strtolower(trim($user))), 0, 32);
+}
+
+function pbhLoginFile($base) {
+    return rtrim($base, '/\\') . '/login_attempts.json';
+}
+
+function pbhReadLoginAttempts($base) {
+    $file = pbhLoginFile($base);
+    if (!file_exists($file)) return [];
+    $parsed = json_decode(@file_get_contents($file), true);
+    if (!is_array($parsed)) return [];
+    // Purga de entradas caducadas: el fichero no crece sin límite.
+    $now = time();
+    foreach ($parsed as $k => $v) {
+        if (($v['first'] ?? 0) + PBH_LOGIN_WINDOW < $now) unset($parsed[$k]);
+    }
+    return $parsed;
+}
+
+// Segundos que quedan de bloqueo (0 = puede intentarlo).
+function pbhLoginBlockedFor($base, $user) {
+    $attempts = pbhReadLoginAttempts($base);
+    $entry = $attempts[pbhLoginKey($user)] ?? null;
+    if (!$entry) return 0;
+    if (($entry['count'] ?? 0) < PBH_LOGIN_MAX_FAILS) return 0;
+    $left = ($entry['first'] ?? 0) + PBH_LOGIN_WINDOW - time();
+    return $left > 0 ? $left : 0;
+}
+
+function pbhRegisterLoginFailure($base, $user) {
+    $attempts = pbhReadLoginAttempts($base);
+    $key = pbhLoginKey($user);
+    $now = time();
+    if (!isset($attempts[$key]) || ($attempts[$key]['first'] ?? 0) + PBH_LOGIN_WINDOW < $now) {
+        $attempts[$key] = ['first' => $now, 'count' => 1];
+    } else {
+        $attempts[$key]['count'] = ($attempts[$key]['count'] ?? 0) + 1;
+    }
+    @file_put_contents(pbhLoginFile($base), json_encode($attempts), LOCK_EX);
+}
+
+function pbhClearLoginFailures($base, $user) {
+    $attempts = pbhReadLoginAttempts($base);
+    unset($attempts[pbhLoginKey($user)]);
+    @file_put_contents(pbhLoginFile($base), json_encode($attempts), LOCK_EX);
+}
+
+// ── VALIDACIÓN DEL IMPORTE EN EL SERVIDOR ──
+// El importe llega del cliente, y el cliente es manipulable (DevTools, curl). Aquí
+// se recalcula a partir de los precios del hotel (textos.txt) y del desglose de
+// copias que acompaña al pago en `order`. Misma lógica que en backend/server.js.
+//
+//   order = { hotel, evento, copies: [1,2,3,...], coupon }
+//
+// Si el cliente es antiguo y no manda `order`, no se puede recalcular: en ese caso
+// se aplica al menos un suelo (el precio más barato del hotel) para que no pase un
+// cobro de 1 céntimo. Así el arreglo no rompe a nadie con la app cacheada.
+
+function pbhReadPrices($configDir) {
+    $prices = ['precio1' => 5.0, 'precio2' => 9.0, 'precio3' => 12.0];
+    $file = $configDir . '/textos.txt';
+    if (file_exists($file)) {
+        $lines = file($file, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
+        foreach ($lines as $line) {
+            $pos = strpos($line, ':');
+            if ($pos === false) continue;
+            $key = trim(substr($line, 0, $pos));
+            $val = trim(substr($line, $pos + 1));
+            if (isset($prices[$key]) && $val !== '') {
+                $num = floatval(str_replace(',', '.', $val));
+                if ($num > 0) $prices[$key] = $num;
+            }
+        }
+    }
+    return $prices;
+}
+
+function pbhOrderConfigDir($order) {
+    $base    = getConfigDir();
+    $hotelId = getSessionHotelId($base);
+    if (!$hotelId) $hotelId = $order['hotel'] ?? ($_GET['hotel'] ?? '');
+    return resolveHotelDir($base, $hotelId);
+}
+
+// Descuento del cupón, validado contra el almacén (no contra lo que diga el cliente).
+// Devuelve céntimos a descontar; para un cupón 'full' devuelve el total.
+function pbhCouponDiscountCents($order, $totalCents) {
+    $code   = strtoupper(trim($order['coupon'] ?? ''));
+    $evento = normalizeCouponEvent($order['evento'] ?? '');
+    if (!$code || !$evento || !verifyCouponCode($code)) return 0;
+
+    $coupons = readCoupons(getCouponFile($evento));
+    if (!isset($coupons[$code])) return 0;
+    $coupon = $coupons[$code];
+    if (($coupon['status'] ?? '') !== 'active') return 0;
+    if (strtotime($coupon['expires_at'] ?? '') < time()) return 0;
+
+    $amount = intval($coupon['amount'] ?? 0);
+    if (($coupon['type'] ?? 'discount') === 'full') {
+        return $amount >= $totalCents ? $totalCents : $amount;
+    }
+    return min($amount, $totalCents);
+}
+
+// true si el importe es aceptable; si no, escribe el motivo en $err.
+function pbhCheckAmountCents($data, $amountCents, &$err) {
+    $order     = is_array($data['order'] ?? null) ? $data['order'] : null;
+    $configDir = pbhOrderConfigDir($order ?: []);
+    $prices    = pbhReadPrices($configDir);
+    $table     = [0, $prices['precio1'], $prices['precio2'], $prices['precio3']];
+
+    if ($order && !empty($order['copies']) && is_array($order['copies'])) {
+        $total = 0.0;
+        foreach ($order['copies'] as $c) {
+            $n = intval($c);
+            if ($n < 1) continue;
+            if ($n > 3) $n = 3;
+            $total += $table[$n];
+        }
+        $expected = (int) round($total * 100);
+        $expected = max(0, $expected - pbhCouponDiscountCents($order, $expected));
+
+        if ($amountCents !== $expected) {
+            $err = 'El importe no coincide con el pedido';
+            return false;
+        }
+        return true;
+    }
+
+    $min = (int) round(min($prices['precio1'], $prices['precio2'], $prices['precio3']) * 100);
+    if ($amountCents < $min) {
+        $err = 'Importe inferior al mínimo configurado';
+        return false;
+    }
+    return true;
+}
+
 function getCsrfToken() {
     global $PRINTBOX_BASE, $cookiePath;
     $ch = curl_init($PRINTBOX_BASE . '/sanctum/csrf-cookie');
     curl_setopt_array($ch, [
         CURLOPT_RETURNTRANSFER => true,
-        CURLOPT_SSL_VERIFYPEER => false,
+        // Si la base acabó siendo http (sondeo fallido) esto no aplica; si es https,
+        // se verifica el certificado de verdad.
+        CURLOPT_SSL_VERIFYPEER => true,
+        CURLOPT_SSL_VERIFYHOST => 2,
         CURLOPT_COOKIEJAR      => $cookiePath,
         CURLOPT_COOKIEFILE     => $cookiePath,
         CURLOPT_FOLLOWLOCATION => true,
@@ -387,7 +598,8 @@ function proxyPost($url, $data, $extraHeaders = []) {
     $ch = curl_init($url);
     curl_setopt_array($ch, [
         CURLOPT_RETURNTRANSFER => true,
-        CURLOPT_SSL_VERIFYPEER => false,
+        CURLOPT_SSL_VERIFYPEER => true,
+        CURLOPT_SSL_VERIFYHOST => 2,
         CURLOPT_POST           => true,
         CURLOPT_POSTFIELDS     => $json,
         CURLOPT_HTTPHEADER     => $headers,
@@ -409,13 +621,24 @@ function proxyPost($url, $data, $extraHeaders = []) {
 $body = file_get_contents('php://input');
 $data = json_decode($body, true) ?? [];
 
-// Log TODOS los requests para debuggear — el body de /auth/* nunca se loguea
-// (llevaría la contraseña en texto plano).
-$__logBody = (strpos($uri, '/auth/') === 0) ? '[redacted]' : substr($body, 0, 200);
-@file_put_contents(__DIR__ . '/pba_requests.log',
-    date('Y-m-d H:i:s') . " {$_SERVER['REQUEST_METHOD']} {$_SERVER['REQUEST_URI']} " .
-    "Content-Length:" . ($_SERVER['CONTENT_LENGTH'] ?? '0') . " Body:" . $__logBody . "\n",
-    FILE_APPEND);
+// Log de peticiones: APAGADO por defecto. Guardaba cuerpos completos (tokens de
+// tarjeta, teléfonos, códigos de cupón) en un fichero dentro del webroot, y la única
+// protección era el .htaccess. Para depurar, crear el fichero vacío
+// config/debug_log.txt en el servidor; para dejar de loguear, borrarlo.
+// Aunque esté activo, los cuerpos de las rutas sensibles no se escriben nunca.
+if (file_exists(getConfigDir() . '/debug_log.txt')) {
+    $__logFile = __DIR__ . '/pba_requests.log';
+    $__sensitive = ['/auth/', '/process-payment', '/paypal/', '/coupon/', '/printbox/otp'];
+    $__redact = false;
+    foreach ($__sensitive as $__p) { if (strpos($uri, $__p) === 0) { $__redact = true; break; } }
+    $__logBody = $__redact ? '[redacted]' : substr($body, 0, 200);
+    // Rotación simple: por encima de 1 MB se descarta el fichero anterior.
+    if (@filesize($__logFile) > 1048576) @unlink($__logFile);
+    @file_put_contents($__logFile,
+        date('Y-m-d H:i:s') . " {$_SERVER['REQUEST_METHOD']} {$_SERVER['REQUEST_URI']} " .
+        "Content-Length:" . ($_SERVER['CONTENT_LENGTH'] ?? '0') . " Body:" . $__logBody . "\n",
+        FILE_APPEND);
+}
 
 header('Content-Type: application/json');
 
@@ -435,6 +658,15 @@ if ($uri === '/auth/login' && $_SERVER['REQUEST_METHOD'] === 'POST') {
         echo json_encode(['error' => 'Usuario y contraseña requeridos']);
         exit();
     }
+    // Freno a la fuerza bruta: 5 fallos por IP+usuario en 15 minutos.
+    $rlWait = pbhLoginBlockedFor($base, $user);
+    if ($rlWait > 0) {
+        http_response_code(429);
+        header('Retry-After: ' . $rlWait);
+        echo json_encode(['error' => 'Demasiados intentos fallidos. Inténtalo de nuevo en ' . ceil($rlWait / 60) . ' min']);
+        exit();
+    }
+
     $hotels = readHotelsAccounts($base);
     $foundId = null; $foundNombre = '';
     foreach ($hotels as $hid => $h) {
@@ -443,10 +675,13 @@ if ($uri === '/auth/login' && $_SERVER['REQUEST_METHOD'] === 'POST') {
         }
     }
     if (!$foundId) {
+        pbhRegisterLoginFailure($base, $user);
+        usleep(300000); // retardo fijo: iguala tiempos y ralentiza el barrido
         http_response_code(401);
         echo json_encode(['error' => 'Usuario o contraseña incorrectos']);
         exit();
     }
+    pbhClearLoginFailures($base, $user);
     pbhSetSessionCookie(pbhMakeToken($foundId, $base), PBH_TTL);
     echo json_encode(['ok' => true, 'hotelId' => $foundId, 'nombre' => $foundNombre]);
     exit();
@@ -507,7 +742,6 @@ if ($uri === '/hotel-logo') {
         exit();
     }
 
-    // GET
     $customLogo = getReadConfigDir() . '/hotel-logo.png';
     clearstatcache(true, $customLogo);
     $file = file_exists($customLogo) ? $customLogo : __DIR__ . '/assets/hotel-logo.png';
@@ -576,10 +810,8 @@ if ($uri === '/config' && $_SERVER['REQUEST_METHOD'] === 'GET') {
                 $shortKey = trim($parts[0]);
                 $val = trim($parts[1] ?? '');
                 
-                // Convertir clave corta a larga si aplica
                 $key = isset($keyMap[$shortKey]) ? $keyMap[$shortKey] : $shortKey;
                 
-                // Guardar si es una clave válida
                 $validKeys = ['text_es','text_en','text_fr','text_de','precio1','precio2','precio3','empresa','email_recepcion'];
                 if (in_array($key, $validKeys)) {
                     $textos[$key] = $val;
@@ -594,7 +826,6 @@ if ($uri === '/config' && $_SERVER['REQUEST_METHOD'] === 'GET') {
 
 // ── /config POST ──
 if ($uri === '/config' && $_SERVER['REQUEST_METHOD'] === 'POST') {
-    // Headers anti-cache
     header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
     header('Pragma: no-cache');
     header('Expires: 0');
@@ -680,7 +911,6 @@ if ($uri === '/config' && $_SERVER['REQUEST_METHOD'] === 'POST') {
     clearstatcache(true, $configDir . '/servidor_api.txt');
     clearstatcache(true, $textosFile);
 
-    // Leer y devolver los valores actualizados inmediatamente
     $config = ['servidor' => 'http://gestion.printboxweb.com', 'evento' => '', 'evento_printer' => '', 'timer' => 5, 'impresora' => '', 'delay' => 5, 'servicio_disponible' => true];
     $textos = ['text_es' => '', 'text_en' => '', 'text_fr' => '', 'text_de' => '', 'precio1' => '', 'precio2' => '', 'precio3' => '', 'empresa' => '', 'email_recepcion' => ''];
 
@@ -841,7 +1071,10 @@ if (strpos($uri, '/printbox/') === 0) {
 // ── Proxy de imágenes (con HTTP + Reintentos + Caché) ──
 if (strpos($uri, '/proxy-image/') === 0) {
     $imagePath = substr($uri, strlen('/proxy-image'));
-    $imageUrl  = 'http://gestion.printboxweb.com' . $imagePath; // forzamos HTTP
+    // La ruta viene de la URL: se limpia para que no pueda salirse del host de Laravel
+    // (un "//otro-host" o un "../" convertirían este proxy en SSRF).
+    $imagePath = '/' . ltrim(str_replace(['..', '\\', "\0"], '', $imagePath), '/');
+    $imageUrl  = $PRINTBOX_BASE . $imagePath;
 
     // Headers de caché agresivo (imágenes son estáticas)
     header('Cache-Control: public, max-age=31536000, immutable');
@@ -857,8 +1090,13 @@ if (strpos($uri, '/proxy-image/') === 0) {
         $ch = curl_init($imageUrl);
         curl_setopt_array($ch, [
             CURLOPT_RETURNTRANSFER => true,
-            CURLOPT_SSL_VERIFYPEER => false,
+            CURLOPT_SSL_VERIFYPEER => true,
+            CURLOPT_SSL_VERIFYHOST => 2,
             CURLOPT_FOLLOWLOCATION => true,
+            CURLOPT_MAXREDIRS      => 2,
+            // Sin esto, una redirección podría llevar el proxy a file:// o gopher://
+            CURLOPT_PROTOCOLS      => CURLPROTO_HTTP | CURLPROTO_HTTPS,
+            CURLOPT_REDIR_PROTOCOLS => CURLPROTO_HTTP | CURLPROTO_HTTPS,
             CURLOPT_TIMEOUT        => 20 + ($attempt * 5), // Aumentar timeout en cada reintento
             CURLOPT_CONNECTTIMEOUT => 10,
             CURLOPT_USERAGENT      => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
@@ -870,12 +1108,10 @@ if (strpos($uri, '/proxy-image/') === 0) {
         $curlError   = curl_error($ch);
         curl_close($ch);
 
-        // Si éxito (código 200), salir del loop de reintentos
         if ($httpCode === 200 && $imageData) {
             break;
         }
 
-        // Si fallo y no es el último intento, esperar antes de reintentar
         if ($attempt < $maxRetries) {
             $backoffMs = 500 * ($attempt); // 500ms, 1s, 1.5s
             usleep($backoffMs * 1000);
@@ -906,11 +1142,19 @@ if ($uri === '/process-payment') {
     $SQUARE_ACCESS_TOKEN = $square['accessToken'];
 
     $amount = isset($data['amount']) ? intval($data['amount']) : 0;  // Ya viene en centavos desde el viewer
-    $location = $data['location_id'] ?? $square['locationId'];
+    // location_id SIEMPRE del servidor: si viene del cliente se puede desviar el cobro.
+    $location = $square['locationId'];
 
     if (!$data['token'] || $amount <= 0) {
         http_response_code(400);
         echo json_encode(['error' => 'token y amount son requeridos']);
+        exit;
+    }
+
+    $amountError = '';
+    if (!pbhCheckAmountCents($data, $amount, $amountError)) {
+        http_response_code(400);
+        echo json_encode(['error' => $amountError]);
         exit;
     }
 
@@ -943,7 +1187,7 @@ if ($uri === '/process-payment') {
     exit();
 }
 
-// ── /paypal/config (Devuelve clientId para PayPal JS SDK) ──
+// ── /paypal/config ──
 if ($uri === '/paypal/config') {
     $paypal = getPaypalCredentials(getConfigDir());
     header('Content-Type: application/json');
@@ -955,7 +1199,7 @@ if ($uri === '/paypal/config') {
     exit();
 }
 
-// ── /paypal/create-order (Crea orden en PayPal) ──
+// ── /paypal/create-order ──
 if ($uri === '/paypal/create-order') {
     $data = json_decode(file_get_contents('php://input'), true);
     $paypal = getPaypalCredentials(getConfigDir());
@@ -972,6 +1216,14 @@ if ($uri === '/paypal/create-order') {
     if (!$amount) {
         http_response_code(400);
         echo json_encode(['error' => 'amount es requerido']);
+        exit();
+    }
+
+    // PayPal recibe euros (no céntimos): se convierte para validar con la misma regla.
+    $amountError = '';
+    if (!pbhCheckAmountCents($data, (int) round(floatval($amount) * 100), $amountError)) {
+        http_response_code(400);
+        echo json_encode(['error' => $amountError]);
         exit();
     }
 
@@ -1004,7 +1256,7 @@ if ($uri === '/paypal/create-order') {
     exit();
 }
 
-// ── /paypal/capture-order (Captura orden PayPal) ──
+// ── /paypal/capture-order ──
 if ($uri === '/paypal/capture-order') {
     $data = json_decode(file_get_contents('php://input'), true);
     $paypal = getPaypalCredentials(getConfigDir());
@@ -1041,7 +1293,9 @@ if ($uri === '/paypal/capture-order') {
     exit();
 }
 
-// Ruta antigua: /proxy.php?route=process-payment (deprecated, kept for backward compatibility)
+// Ruta antigua /proxy.php?route=process-payment, mantenida por si queda alguna app
+// cacheada apuntando ahí. Duplica la lógica de /process-payment: cualquier cambio en
+// una hay que replicarlo en la otra (o borrar esta cuando ya no se use).
 if (($_GET['route'] ?? '') === 'process-payment') {
     $data = json_decode(file_get_contents('php://input'), true);
 
@@ -1054,11 +1308,19 @@ if (($_GET['route'] ?? '') === 'process-payment') {
     $SQUARE_ACCESS_TOKEN = $square['accessToken'];
 
     $amount = isset($data['amount']) ? intval($data['amount']) : 0;  // Ya viene en centavos desde el viewer
-    $location = $data['location_id'] ?? $square['locationId'];
+    // location_id SIEMPRE del servidor (ver ruta nueva).
+    $location = $square['locationId'];
 
     if (!$data['token'] || $amount <= 0) {
         http_response_code(400);
         echo json_encode(['error' => 'token y amount son requeridos']);
+        exit;
+    }
+
+    $amountError = '';
+    if (!pbhCheckAmountCents($data, $amount, $amountError)) {
+        http_response_code(400);
+        echo json_encode(['error' => $amountError]);
         exit;
     }
 
@@ -1091,9 +1353,7 @@ if (($_GET['route'] ?? '') === 'process-payment') {
     exit();
 }
 
-// ══════════════════════════════════════════════════════════════════════════
-// ── SISTEMA DE CUPONES ────────────────────────────────────────────────────
-// ══════════════════════════════════════════════════════════════════════════
+// ── SISTEMA DE CUPONES ──
 
 // Clave secreta para firmar los códigos: aleatoria, generada una vez y guardada en
 // config/coupon_secret.txt (fuera de git, protegida por config/.htaccess). Nunca
@@ -1108,9 +1368,6 @@ function getCouponSecret() {
     return $secret;
 }
 
-/**
- * Normaliza el código de evento (quita prefijo ev- / ev_)
- */
 function normalizeCouponEvent($code) {
     return preg_replace('/^ev[-_]?/i', '', trim($code));
 }
@@ -1135,9 +1392,6 @@ function getCouponFile($evento) {
     return $configDir . '/cupones-' . $evento . '.json';
 }
 
-/**
- * Devuelve la ruta del archivo de log de cupones para un evento.
- */
 function getCouponLogFile($evento) {
     $configDir = getConfigDir();
     $evento = preg_replace('/[^0-9a-zA-Z_-]/', '', $evento);
@@ -1155,9 +1409,6 @@ function readCoupons($file) {
     return is_array($decoded) ? $decoded : [];
 }
 
-/**
- * Escribe el JSON de cupones en el archivo indicado.
- */
 function writeCoupons($file, $coupons) {
     file_put_contents($file, json_encode($coupons, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE));
 }
@@ -1229,9 +1480,6 @@ function withCouponLock($couponFile, callable $fn) {
     return $result;
 }
 
-/**
- * Escribe una línea en el log de uso de cupones.
- */
 function logCouponUsage($evento, $code, $amount, $action) {
     $logFile = getCouponLogFile($evento);
     $ip      = $_SERVER['REMOTE_ADDR'] ?? 'unknown';
@@ -1365,7 +1613,6 @@ if ($uri === '/coupon/redeem' && $_SERVER['REQUEST_METHOD'] === 'POST') {
         exit();
     }
 
-    // Verificar firma HMAC
     if (!verifyCouponCode($code)) {
         http_response_code(422);
         echo json_encode(['ok' => false, 'error' => 'Código de cupón inválido']);
@@ -1390,7 +1637,6 @@ if ($uri === '/coupon/redeem' && $_SERVER['REQUEST_METHOD'] === 'POST') {
             return ['ok' => false, 'error' => 'Cupón caducado', 'http' => 422];
         }
 
-        // Marcar como usado
         $coupons[$code]['status']     = 'used';
         $coupons[$code]['used_at']    = date('c');
         $coupons[$code]['used_by_ip'] = $_SERVER['REMOTE_ADDR'] ?? 'unknown';
@@ -1465,9 +1711,6 @@ if ($uri === '/coupon/list' && $_SERVER['REQUEST_METHOD'] === 'GET') {
     exit();
 }
 
-// ══════════════════════════════════════════════════════════════════════════
-// ── FIN SISTEMA DE CUPONES ────────────────────────────────────────────────
-// ══════════════════════════════════════════════════════════════════════════
 
 http_response_code(404);
 echo json_encode(['error' => 'Ruta no encontrada', 'uri' => $uri]);

@@ -17,8 +17,26 @@ RewriteBase /
     </FilesMatch>
 </IfModule>
 
-# CSP disabled for debugging - allows all resources including data URLs
-Header always set Content-Security-Policy "default-src *; script-src * 'unsafe-inline' 'unsafe-eval'; style-src * 'unsafe-inline'; img-src * data:; font-src * data:; connect-src *; frame-src *; object-src *;"
+# CSP: se limita a los orígenes que la app usa de verdad (jsDelivr para Bootstrap,
+# Google Fonts, Square y PayPal). Se mantienen 'unsafe-inline'/'unsafe-eval' porque
+# los SDK de pago los necesitan; lo que se cierra es que valga CUALQUIER origen, que
+# es lo que convertía un XSS o un CDN comprometido en robo de tarjetas.
+# Si algún día se rompe la pasarela tras un cambio de Square/PayPal, el fallo saldrá
+# en la consola del navegador como "Refused to load ..." y solo hay que añadir el
+# dominio que falte a la directiva correspondiente.
+Header always set Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net https://web.squarecdn.com https://js.squareup.com https://www.paypal.com https://www.paypalobjects.com https://*.paypal.com; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com https://cdn.jsdelivr.net; img-src 'self' data: blob: https:; media-src 'self' blob:; worker-src 'self' blob:; connect-src 'self' https://cdn.jsdelivr.net https://connect.squareup.com https://pci-connect.squareup.com https://*.squareup.com https://*.squarecdn.com https://api-m.paypal.com https://api-m.sandbox.paypal.com https://www.paypal.com https://*.paypal.com; frame-src https://web.squarecdn.com https://*.squareup.com https://www.paypal.com https://*.paypal.com; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'self'"
+
+# Cabeceras de seguridad que faltaban
+Header always set X-Content-Type-Options "nosniff"
+Header always set Referrer-Policy "strict-origin-when-cross-origin"
+Header always set X-Frame-Options "SAMEORIGIN"
+# HSTS solo cuando la petición llega por HTTPS (si no, no tiene efecto y evita dejar
+# clavado el sitio en https si alguien lo sirve por http en pruebas). Se usa SetEnvIf
+# en vez de <If> porque <If> solo existe en Apache 2.4 y rompería con un 500 en 2.2.
+<IfModule mod_setenvif.c>
+    SetEnvIf HTTPS on PBH_HTTPS
+</IfModule>
+Header always set Strict-Transport-Security "max-age=15552000" env=PBH_HTTPS
 
 # ¡IMPORTANTE! Las reglas de API DEBEN ir ANTES de la regla de archivos/directorios reales
 # Porque /config/ es una carpeta real que existe, Apache la ve como directorio

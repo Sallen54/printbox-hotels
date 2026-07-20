@@ -3,15 +3,13 @@ import { findEvent, getPhotosToPrint, getConfig, saveConfig, getPrinters, getPri
 import { useInterval } from '../shared/hooks/useInterval'
 import './Printer.css'
 
-// Versión de la aplicación
 const APP_VERSION = '1.0.6'
 
-// URL del backend (desde Electron o localhost)
+// Ojo: aquí el backend está fijado a un dominio, no se resuelve como en shared/api.js.
+// El Printer corre en el PC de recepción y habla siempre con este despliegue.
 const BACKEND = "https://printbox.incomar.net"
 
-// ============================================
-// COMPONENTE PRINCIPAL - PANEL DE IMPRESIÓN
-// ============================================
+// ── COMPONENTE PRINCIPAL - PANEL DE IMPRESIÓN ──
 export default function PrinterApp() {
   // --- Estados de configuración ---
   const [config, setConfig] = useState({
@@ -55,14 +53,8 @@ export default function PrinterApp() {
   const reconnectAttemptsRef = useRef(0)                     // Contador de intentos de reconexión
   const logsRef = useRef(null)                               // Referencia para auto-scroll del log
 
-  // ============================================
-  // FUNCIONES DE MONITOREO
-  // ============================================
+  // ── FUNCIONES DE MONITOREO ──
 
-  /**
-   * Verificar el estado de la impresora seleccionada
-   * @param {string} printerName - Nombre de la impresora a verificar
-   */
   async function checkPrinterStatus(printerName) {
     try {
       const list = await getPrinters()
@@ -78,13 +70,8 @@ export default function PrinterApp() {
     }
   }
 
-  // ============================================
-  // EFECTOS DE INICIALIZACIÓN
-  // ============================================
+  // ── EFECTOS DE INICIALIZACIÓN ──
 
-  /**
-   * Cargar configuración inicial y datos guardados
-   */
   useEffect(() => {
     // El Printer comparte la cookie de sesión del Monitor (mismo navegador de recepción).
     // Sin sesión no hay hotel del que leer config → avisar de que hay que entrar en el Monitor.
@@ -102,32 +89,21 @@ export default function PrinterApp() {
     }).catch(() => setNoSession(true))
   }, [])
 
-  /**
-   * Verificar estado de la impresora cada 30 segundos
-   */
   useInterval(() => checkPrinterStatus(config.impresora), 30000)
 
-  /**
-   * Auto-scroll del log cuando se agregan nuevos mensajes
-   */
   useEffect(() => {
     if (logsRef.current) {
       logsRef.current.scrollTop = logsRef.current.scrollHeight
     }
   }, [logs])
 
-  /**
-   * Auto-focus en el input del modal cuando se abre
-   */
   useEffect(() => {
     if (showEventModal) {
       setTimeout(() => eventInputRef.current?.focus(), 50)
     }
   }, [showEventModal])
 
-  // ============================================
-  // FUNCIONES DE LOG
-  // ============================================
+  // ── FUNCIONES DE LOG ──
 
   /**
    * Agregar un mensaje al log
@@ -139,38 +115,22 @@ export default function PrinterApp() {
     setLogs(prev => [...prev.slice(-200), { time, msg, type, id: Date.now() + Math.random() }])
   }
 
-  /**
-   * Actualizar el temporizador cada segundo cuando está en ejecución
-   */
   useInterval(() => setElapsed(e => e + 1), running ? 1000 : null)
 
-  /**
-   * Formatear segundos a formato HH:MM:SS
-   * @param {number} s - Segundos
-   * @returns {string} - Tiempo formateado
-   */
   function formatElapsed(s) {
     return [Math.floor(s / 3600), Math.floor((s % 3600) / 60), s % 60]
       .map(n => String(n).padStart(2, '0'))
       .join(':')
   }
 
-  // ============================================
-  // MANEJO DEL EVENTO
-  // ============================================
+  // ── MANEJO DEL EVENTO ──
 
-  /**
-   * Abrir modal para cambiar evento
-   */
   function handleStartClick() {
     setEventInput((config.evento_printer || config.evento)?.replace('ev-', '') || '')
     setEventError('')
     setShowEventModal(true)
   }
 
-  /**
-   * Confirmar el código del evento y guardarlo
-   */
   async function handleEventConfirm() {
     const code = eventInput.trim()
     if (!code) {
@@ -187,22 +147,13 @@ export default function PrinterApp() {
     addLog(`✓ Evento de impresora configurado: ${fullCode}`, 'success')
   }
 
-  /**
-   * Manejar teclas en el modal de evento
-   * @param {KeyboardEvent} e - Evento de teclado
-   */
   function handleKeyDown(e) {
     if (e.key === 'Enter') handleEventConfirm()
     if (e.key === 'Escape') setShowEventModal(false)
   }
 
-  // ============================================
-  // CONTROL DE EJECUCIÓN
-  // ============================================
+  // ── CONTROL DE EJECUCIÓN ──
 
-  /**
-   * Iniciar el programa de impresión
-   */
   async function handleStart() {
     const eventToUse = config.evento_printer || config.evento
     if (!eventToUse) {
@@ -223,22 +174,14 @@ export default function PrinterApp() {
     }
   }
 
-  /**
-   * Detener el programa de impresión
-   */
   function handleStop() {
     setRunning(false)
     setUuid(null)
     addLog('— Programa detenido.', 'warn')
   }
 
-  // ============================================
-  // RECONEXIÓN AUTOMÁTICA
-  // ============================================
+  // ── RECONEXIÓN AUTOMÁTICA ──
 
-  /**
-   * Intentar reconectar a la API automáticamente
-   */
   async function tryReconnect() {
     const eventToUse = config.evento_printer || config.evento
     if (reconnecting || !eventToUse) return
@@ -263,13 +206,8 @@ export default function PrinterApp() {
     }
   }
 
-  // ============================================
-  // VERIFICACIÓN E IMPRESIÓN DE FOTOS
-  // ============================================
+  // ── VERIFICACIÓN E IMPRESIÓN DE FOTOS ──
 
-  /**
-   * Verificar nuevas fotos e imprimirlas
-   */
   const checkAndPrint = useCallback(async () => {
     if (!uuid) return
 
@@ -296,7 +234,6 @@ export default function PrinterApp() {
 
         // Extraer el prefijo y el nombre
         // Formato 1: gallery_name.jpeg
-        // Formato 2: print_N_name.jpeg
         let photoName = baseName
         let copies = photo.times || 1
 
@@ -318,13 +255,10 @@ export default function PrinterApp() {
         }
 
         // Es un archivo gallery_, usar times como número de copias
-        // Pero NO podemos cambiar a print_N_ porque el archivo no existe
-        // Solo guardamos el mayor times
         const galleryMatch = baseName.match(/^gallery_(.+)$/)
         if (galleryMatch) {
           photoName = galleryMatch[1]
           const key = `${eventPath}|${photoName}`
-          // Solo guardar si no existe o si este tiene más copias
           if (!photoMap.has(key) || copies > photoMap.get(key).copies) {
             photoMap.set(key, {
               eventPath,
@@ -387,31 +321,18 @@ export default function PrinterApp() {
     }
   }, [uuid, printedImages, config.impresora, config.delay, config.evento, config.evento_printer])
 
-  /**
-   * Intervalo de verificación de fotos (cada X segundos)
-   */
   useInterval(checkAndPrint, running ? config.timer * 1000 : null)
 
-  // ============================================
-  // GUARDAR CONFIGURACIÓN
-  // ============================================
+  // ── GUARDAR CONFIGURACIÓN ──
 
-  /**
-   * Guardar la configuración actual
-   */
   async function handleSave() {
     await saveConfig(config, textos)
     setEditing(false)
     addLog('✓ Configuración guardada.', 'success')
   }
 
-  // ============================================
-  // RENDER
-  // ============================================
+  // ── RENDER ──
 
-  /**
-   * Clase CSS según el tipo de log
-   */
   const logTypeClass = {
     info: 'log-info',
     success: 'log-success',

@@ -113,9 +113,7 @@ export default function ViewerApp() {
   const [appliedCoupon, setAppliedCoupon] = useState(null)
   const [discountAmount, setDiscountAmount] = useState(0)
 
-  // ============================================
-  // LOCALSTORAGE (solo caché de pintado; la fuente de verdad es el servidor por sesión)
-  // ============================================
+  // ── LOCALSTORAGE (solo caché de pintado; la fuente de verdad es el servidor por sesión) ──
   const saveViewerState = () => {
     try {
       const data = { config, textos, currentPage, lastPage, printCount }
@@ -123,9 +121,7 @@ export default function ViewerApp() {
     } catch (e) { console.error(e) }
   }
 
-  // ============================================
-  // INICIALIZACIÓN (tras autenticar) — toda la config viene del hotel de la sesión
-  // ============================================
+  // ── INICIALIZACIÓN (tras autenticar) — toda la config viene del hotel de la sesión ──
   const init = useCallback(async () => {
     try {
       const [d, count] = await Promise.all([
@@ -196,9 +192,7 @@ export default function ViewerApp() {
   useEffect(() => { fetch('/assets/terms_and_conditions_2.html').then(r=>r.text()).then(setPrivacyContent).catch(()=>setPrivacyContent(defaultPrivacyContent)) }, [])
   useEffect(() => { if (session) saveViewerState() }, [config, textos, currentPage, lastPage, printCount, session])
 
-  // ============================================
-  // EVENTO Y ADMIN
-  // ============================================
+  // ── EVENTO Y ADMIN ──
   // Cambiar la habitación que muestra el Monitor (de entre las registradas)
   async function handleSelectRoom(codigo) {
     const fullCode = `ev-${codigo}`
@@ -247,9 +241,7 @@ export default function ViewerApp() {
     .map(r => ({ nombre: r.nombre.trim(), codigo: r.codigo.trim() }))
     .filter(r => r.codigo)
 
-  // ============================================
-  // ASISTENTE DE PRIMERA CONFIGURACIÓN
-  // ============================================
+  // ── ASISTENTE DE PRIMERA CONFIGURACIÓN ──
   async function handleWizardFinish() {
     const rooms = validRooms(wizardRooms)
     if (!rooms.length) { setWizardError('Añade al menos una habitación con su código'); return }
@@ -286,9 +278,7 @@ export default function ViewerApp() {
     }
   }
 
-  // ============================================
-  // ADMIN
-  // ============================================
+  // ── ADMIN ──
   // El acceso ya está protegido por la sesión de hotel; el Admin abre directo.
   function openAdmin() {
     setAdminError('')
@@ -344,9 +334,7 @@ export default function ViewerApp() {
     }
   }
 
-  // ============================================
-  // FOTOS
-  // ============================================
+  // ── FOTOS ──
   useEffect(() => { if (!config?.evento) return; findEvent(config.evento).then(setUuid).catch(e => setError(`No se pudo conectar: ${e.message}`)) }, [config?.evento])
 
   const loadAllPhotos = useCallback(async (localPage = 1) => {
@@ -381,9 +369,7 @@ export default function ViewerApp() {
   // Autoplay
   useInterval(() => { if (autoplay) setCurrentPage(p => (p < lastPage ? p + 1 : 1)) }, autoplay ? 15000 : null)
 
-  // ============================================
-  // HELPERS DE PRECIO
-  // ============================================
+  // ── HELPERS DE PRECIO ──
   function getPrecio(n) {
     if (!textos) return null
     if (n === 1) return textos.precio1
@@ -394,14 +380,28 @@ export default function ViewerApp() {
     const p = parseFloat(getPrecio(copies) || 0)
     return isNaN(p) ? '0' : p.toFixed(2)
   }
+  // Un cupón 'discount' resta su importe; uno 'full' cubre el pedido entero cuando su
+  // importe alcanza el total (si no, cubre lo que puede y el resto se paga con tarjeta).
+  const couponDiscountCents = (total) => {
+    if (!appliedCoupon) return 0
+    if (appliedCoupon.type === 'full') return Math.min(appliedCoupon.amount, total)
+    return appliedCoupon.type === 'discount' ? appliedCoupon.amount : 0
+  }
+
   const totalCents = Math.round(parseFloat(totalPrice()) * 100)
-  const discountCents = (appliedCoupon?.type === 'discount') ? appliedCoupon.amount : 0
+  const discountCents = couponDiscountCents(totalCents)
   const finalCents = Math.max(0, totalCents - discountCents)
   const finalPrice = (finalCents / 100).toFixed(2)
 
-  // ============================================
-  // CUPONES (proxy.php)
-  // ============================================
+  // Desglose que se manda con el pago para que el servidor recalcule el importe.
+  const orderPayload = () => ({
+    hotel: session?.hotelId || '',
+    evento: (config?.evento || '').replace('ev-', ''),
+    copies: [copies],
+    coupon: appliedCoupon ? couponCode.trim().toUpperCase() : undefined,
+  })
+
+  // ── CUPONES (proxy.php) ──
   const validateCoupon = async (code) => {
     const evento = (config?.evento || '').replace('ev-', '')
     const res = await fetch('/coupon/validate', {
@@ -425,9 +425,7 @@ export default function ViewerApp() {
     return json
   }
 
-  // ============================================
-  // IMPRESIÓN Y PAGO
-  // ============================================
+  // ── IMPRESIÓN Y PAGO ──
   function handleSelectPhoto(photo) { setSelectedPhoto(photo); setCopies(1); setPrintDone(false); setShowPayment(false); setAppliedCoupon(null); setDiscountAmount(0); setCouponCode(''); setCouponError('') }
 
   const handleApplyCoupon = async () => {
@@ -459,13 +457,12 @@ export default function ViewerApp() {
           setSquareLoading(true)
           const result = await squareCard.tokenize()
           if (result.status !== 'OK') throw new Error(result.errors?.[0]?.message || 'Tokenización fallida')
-          await processPayment({ token: result.token, amount: String(finalCents), currency: 'EUR', location_id: SQUARE_LOCATION_ID })
+          await processPayment({ token: result.token, amount: String(finalCents), currency: 'EUR', order: orderPayload() })
           setSquareLoading(false)
         } else if (paymentMethod === 'paypal') {
-          // PayPal se maneja aparte con createOrder, pero aquí el flujo es unificado.
-          // En el modal actual el botón "Pagar y Imprimir" llama a handlePayment.
-          // Para simplificar, asociaremos PayPal directamente al botón (similar a Square).
-          // Como la integración de PayPal en Viewer es mínima, mostraremos un mensaje.
+          // PayPal NO está integrado en el Monitor (sí en el móvil, con los botones del
+          // SDK). Mientras siga así, este método no debería ofrecerse en la UI: el
+          // usuario llega al final del flujo y solo entonces ve el error.
           throw new Error('PayPal en Viewer requiere integración adicional. Usa Square o cupón.')
         }
       }
@@ -506,9 +503,7 @@ export default function ViewerApp() {
     }
   }, [showPayment, paymentMethod])
 
-  // ============================================
-  // ADMIN CUPONES
-  // ============================================
+  // ── ADMIN CUPONES ──
   const handleGenerateCoupon = async () => {
     const euros = parseFloat(couponGenAmount)
     if (!euros || euros <= 0) { setCouponGenError('Importe inválido'); return }
@@ -540,9 +535,7 @@ export default function ViewerApp() {
     finally { setCouponListLoading(false) }
   }
 
-  // ============================================
-  // RENDER
-  // ============================================
+  // ── RENDER ──
   // Comprobando sesión (primer render)
   if (session === undefined) {
     return (

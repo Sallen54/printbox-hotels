@@ -5,9 +5,7 @@ import './Mobile.css'
 
 window.isMobile = true
 
-// ============================================
-// UTILIDADES
-// ============================================
+// ── UTILIDADES ──
 
 function resizeImageBase64(dataUrl, maxSize = 1200) {
   return new Promise((resolve) => {
@@ -24,24 +22,18 @@ function resizeImageBase64(dataUrl, maxSize = 1200) {
   })
 }
 
-// ============================================
-// CONSTANTES DE PASOS
-// ============================================
+// ── CONSTANTES DE PASOS ──
 const STEP_EVENT = 'event'
 const STEP_GALLERY = 'gallery'
 const STEP_CAMERA = 'camera'
 const STEP_ORDER = 'order'
 const STEP_SUCCESS = 'success'
 
-// ============================================
-// CONSTANTES DE SQUARE
-// ============================================
+// ── CONSTANTES DE SQUARE ──
 const SQUARE_APP_ID = 'sq0idp-OV9y595m1kR_UU3QRest7Q'
 const SQUARE_LOCATION_ID = 'LHB32XGQK68GX'
 
-// ============================================
-// COMPONENTE PRINCIPAL
-// ============================================
+// ── COMPONENTE PRINCIPAL ──
 
 export default function MobileApp() {
   // --- Estados del flujo ---
@@ -93,9 +85,7 @@ export default function MobileApp() {
   const [appliedCoupon, setAppliedCoupon] = useState(null) // { amount, amount_eur, type }
   const [discountAmount, setDiscountAmount] = useState(0)   // en céntimos
 
-  // ============================================
-  // FUNCIONES AUXILIARES
-  // ============================================
+  // ── FUNCIONES AUXILIARES ──
   const normalizeEventCode = (code = '') => String(code).trim().replace(/^ev[-_]?/i, '')
 
   const showToast = (msg, duration = 3000) => {
@@ -117,9 +107,7 @@ export default function MobileApp() {
     }))
   }
 
-  // ============================================
-  // LOCALSTORAGE
-  // ============================================
+  // ── LOCALSTORAGE ──
   const saveToLocalStorage = () => {
     const data = { hotelId, eventCode, step, capturedPhotos, uuid, textos }
     localStorage.setItem('printbox_mobile_state', JSON.stringify(data))
@@ -142,9 +130,7 @@ export default function MobileApp() {
     return null
   }
 
-  // ============================================
-  // EFECTOS INICIALES
-  // ============================================
+  // ── EFECTOS INICIALES ──
   useEffect(() => {
     document.documentElement.style.overflow = 'auto'
     document.body.style.overflow = 'auto'
@@ -157,6 +143,11 @@ export default function MobileApp() {
     }
   }, [])
 
+  // OJO: loadFromLocalStorage() solo puede llamarse en la rama `else`. Si se llama
+  // también fuera del if/else, bajo React.StrictMode (dev) el efecto se ejecuta dos
+  // veces y la segunda pasada relee un localStorage que todavía no tiene el código de
+  // habitación recién fijado, dejando eventCode vacío → el aviso a recepción sale con
+  // room: "". No afecta a producción, pero rompe cualquier prueba local.
   useEffect(() => {
     const params = new URLSearchParams(window.location.search)
     const hotelParam = params.get('hotel') || ''
@@ -271,13 +262,13 @@ export default function MobileApp() {
           style: { layout: 'vertical', color: 'gold', shape: 'rect', label: 'paypal' },
           createOrder: async () => {
             const totalCents = Math.round(parseFloat(totalPrice()) * 100)
-            const discountCents = (appliedCoupon?.type === 'discount') ? appliedCoupon.amount : 0
+            const discountCents = couponDiscountCents(totalCents)
             const finalCents = Math.max(0, totalCents - discountCents)
             if (appliedCoupon?.type === 'full' && finalCents > 0) {
               throw new Error('El cupón de pago completo no cubre el total')
             }
             const finalAmount = (finalCents / 100).toFixed(2)
-            return await createPayPalOrder({ amount: finalAmount, currency: 'EUR' })
+            return await createPayPalOrder({ amount: finalAmount, currency: 'EUR', order: orderPayload() })
           },
           onApprove: async (data) => {
             setPaypalLoading(true)
@@ -306,9 +297,7 @@ export default function MobileApp() {
     return () => { cancelled = true }
   }, [step, appliedCoupon])
 
-  // ============================================
-  // CUPONES (proxy.php)
-  // ============================================
+  // ── CUPONES (proxy.php) ──
   const validateCoupon = async (code) => {
     const evento = normalizeEventCode(eventCode)
     const res = await fetch('/coupon/validate', {
@@ -351,9 +340,7 @@ export default function MobileApp() {
     }
   }
 
-  // ============================================
-  // CONEXIÓN EVENTO Y GALERÍA
-  // ============================================
+  // ── CONEXIÓN EVENTO Y GALERÍA ──
   async function handleConnectEvent(code = null, hotelOverride = null) {
     const eventCodeToUse = normalizeEventCode(code || eventCode)
     if (!eventCodeToUse) { setEventError('Introduce el número de habitación'); return }
@@ -383,9 +370,7 @@ export default function MobileApp() {
     }
   }
 
-  // ============================================
-  // CÁMARA
-  // ============================================
+  // ── CÁMARA ──
   async function startCamera() {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode }, audio: false })
@@ -426,9 +411,7 @@ export default function MobileApp() {
     setCapturedPhotos(prev => prev.filter(p => p.id !== id))
   }
 
-  // ============================================
-  // SUBIR FOTOS YA GUARDADAS EN EL MÓVIL (galería del dispositivo)
-  // ============================================
+  // ── SUBIR FOTOS YA GUARDADAS EN EL MÓVIL (galería del dispositivo) ──
   async function handleGalleryFilesSelected(e) {
     const files = Array.from(e.target.files || [])
     e.target.value = '' // permite volver a elegir el mismo archivo más tarde
@@ -444,9 +427,7 @@ export default function MobileApp() {
     if (files.length) showToast(`${files.length} foto${files.length > 1 ? 's' : ''} añadida${files.length > 1 ? 's' : ''} al pedido`)
   }
 
-  // ============================================
-  // PEDIDO Y PAGO
-  // ============================================
+  // ── PEDIDO Y PAGO ──
   const totalCopies = capturedPhotos.map(p => p.copies).reduce((a,b) => a+b, 0)
   const priceForPhoto = (copies) => {
     const c = Math.min(copies,3)
@@ -460,8 +441,24 @@ export default function MobileApp() {
     return capturedPhotos.reduce((sum, p) => sum + priceForPhoto(p.copies), 0).toFixed(2)
   }
 
+  // Un cupón 'discount' resta su importe; uno 'full' cubre el pedido entero cuando su
+  // importe alcanza el total (si no, cubre lo que puede y el resto se paga con tarjeta).
+  const couponDiscountCents = (total) => {
+    if (!appliedCoupon) return 0
+    if (appliedCoupon.type === 'full') return Math.min(appliedCoupon.amount, total)
+    return appliedCoupon.type === 'discount' ? appliedCoupon.amount : 0
+  }
+
+  // Desglose que se manda con el pago para que el servidor recalcule el importe.
+  const orderPayload = () => ({
+    hotel: hotelId,
+    evento: normalizeEventCode(eventCode),
+    copies: capturedPhotos.map(p => p.copies),
+    coupon: appliedCoupon ? couponCode.trim().toUpperCase() : undefined,
+  })
+
   const totalCents = Math.round(parseFloat(totalPrice()) * 100)
-  const discountCents = (appliedCoupon?.type === 'discount') ? appliedCoupon.amount : 0
+  const discountCents = couponDiscountCents(totalCents)
   const finalCents = Math.max(0, totalCents - discountCents)
   const finalPrice = (finalCents / 100).toFixed(2)
 
@@ -480,7 +477,7 @@ export default function MobileApp() {
           token: result.token,
           amount: String(finalCents),
           currency: 'EUR',
-          location_id: SQUARE_LOCATION_ID,
+          order: orderPayload(),
         })
       }
       if (appliedCoupon) {
@@ -515,9 +512,7 @@ export default function MobileApp() {
     return true
   }
 
-  // ============================================
-  // RENDER POR PASO
-  // ============================================
+  // ── RENDER POR PASO ──
   if (serviceUnavailable) {
     return (
       <div className="mobile-app event-container">
