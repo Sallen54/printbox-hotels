@@ -4,11 +4,15 @@ const path = require('path')
 const root = path.resolve(__dirname, '..')
 const dist = path.join(root, 'dist')
 
-// Ficheros de config/ que NUNCA deben viajar en el build ni acabar en el webroot:
-// credenciales de cobro, secreto de sesión, cuentas de hotel y datos de cupones.
-// Se suben (o se generan) UNA VEZ en el servidor y el deploy no los toca.
-// El resto de config/ (textos, precios, habitaciones, logos, .htaccess) sí se copia,
-// que es lo que esperaba el flujo de despliegue existente.
+// Ficheros sensibles que SÍ se copian a dist/ (y por tanto viajan al servidor en el
+// FTP): cuentas con hash bcrypt, secreto de sesión, credenciales de cobro y la config
+// y logos de cada hotel. Se listan aquí para poder avisar por consola de que van
+// dentro y para comprobar que el .htaccess que los tapa viaja con ellos.
+//
+// Lo único que impide servirlos por HTTP es config/.htaccess, así que este script
+// aborta el build si ese fichero falta o no deniega el acceso.
+//
+// Para generar un dist/ sin ellos (p. ej. para compartir el build): PBH_SIN_SECRETOS=1 npm run build
 const SECRET_PATTERNS = [
   /^square\.json$/i,
   /^paypal\.json$/i,
@@ -19,9 +23,20 @@ const SECRET_PATTERNS = [
   /\.log$/i,
 ]
 
+const SKIP_SECRETS = process.env.PBH_SIN_SECRETOS === '1'
+
 function isSecret(fullPath) {
-  const name = path.basename(fullPath)
-  return SECRET_PATTERNS.some((re) => re.test(name))
+  return SECRET_PATTERNS.some((re) => re.test(path.basename(fullPath)))
+}
+
+async function listSecrets(dir, found = []) {
+  if (!(await fs.pathExists(dir))) return found
+  for (const entry of await fs.readdir(dir)) {
+    const full = path.join(dir, entry)
+    if ((await fs.stat(full)).isDirectory()) await listSecrets(full, found)
+    else if (isSecret(full)) found.push(path.relative(dist, full))
+  }
+  return found
 }
 
 async function copyAssets() {
@@ -31,28 +46,41 @@ async function copyAssets() {
 
   await fs.copy(path.join(root, 'config'), path.join(dist, 'config'), {
     overwrite: true,
-    filter: (src) => !isSecret(src),
+    filter: (src) => !SKIP_SECRETS || !isSecret(src),
   })
 
-  // Limpieza: si un build anterior dejó secretos dentro de dist/, se borran ahora.
   const distConfig = path.join(dist, 'config')
-  let removed = 0
-  const walk = async (dir) => {
-    if (!(await fs.pathExists(dir))) return
-    for (const entry of await fs.readdir(dir)) {
-      const full = path.join(dir, entry)
-      const stat = await fs.stat(full)
-      if (stat.isDirectory()) await walk(full)
-      else if (isSecret(full)) { await fs.remove(full); removed++ }
-    }
-  }
-  await walk(distConfig)
 
-  console.log('Copied .htaccess, proxy.php and config to dist/ (secrets excluded)')
-  if (removed) console.log(`Removed ${removed} secret file(s) left by a previous build`)
+  if (SKIP_SECRETS) {
+    // Limpieza de secretos que hubiera dejado un build anterior
+    for (const rel of await listSecrets(distConfig)) {
+      await fs.remove(path.join(dist, rel))
+    }
+    console.log('Copiado .htaccess, proxy.php y config/ a dist/ (SIN secretos)')
+    return
+  }
+
+  // Red de seguridad: los secretos solo están a salvo en el servidor mientras
+  // config/.htaccess los deniegue. Si no viaja, el deploy los dejaría descargables.
+  const guard = path.join(distConfig, '.htaccess')
+  if (!(await fs.pathExists(guard))) {
+    throw new Error('dist/config/.htaccess NO existe: sin él los secretos quedarían accesibles por HTTP. Restaura config/.htaccess antes de desplegar.')
+  }
+  if (!/Require all denied|Deny from all/i.test(await fs.readFile(guard, 'utf8'))) {
+    throw new Error('dist/config/.htaccess no deniega el acceso. Revísalo antes de desplegar.')
+  }
+
+  const secrets = await listSecrets(distConfig)
+  console.log('Copiado .htaccess, proxy.php y config/ a dist/')
+  if (secrets.length) {
+    console.log(`\n  AVISO: ${secrets.length} fichero(s) sensible(s) van dentro de dist/ y se subirán al servidor:`)
+    for (const rel of secrets) console.log(`    - ${rel}`)
+    console.log('  Lo único que impide servirlos por HTTP es config/.htaccess (verificado arriba).')
+    console.log('  Comprueba de vez en cuando que https://tudominio/config/square.json devuelve 403.\n')
+  }
 }
 
 copyAssets().catch((err) => {
-  console.error('Error copying dist assets:', err)
+  console.error('Error copiando assets a dist/:', err.message)
   process.exit(1)
 })

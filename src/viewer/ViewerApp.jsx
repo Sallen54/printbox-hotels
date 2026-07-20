@@ -708,7 +708,7 @@ export default function ViewerApp() {
                   <div className="col-md-6"><label className="form-label text-light">Evento de impresión (Impresora)</label><div className="input-group"><span className="input-group-text bg-black border-secondary text-warning fw-bold font-mono">ev-</span><input type="text" inputMode="numeric" className="form-control bg-black border-secondary text-light font-mono" value={adminPrinterEventCode} onChange={e => setAdminPrinterEventCode(e.target.value.replace(/\D/g, ''))} /></div><div className="form-text text-secondary">Opcional: si se rellena, las fotos pagadas se envían a este evento (el que vigila la app Printer) en vez de al de cada habitación.</div></div>
                   <div className="col-md-2"><label className="form-label text-light">1 Foto (€)</label><input type="number" step="0.01" className="form-control bg-black border-secondary text-light" value={adminPrice1} onChange={e => setAdminPrice1(e.target.value)} /></div>
                   <div className="col-md-2"><label className="form-label text-light">2 Fotos (€)</label><input type="number" step="0.01" className="form-control bg-black border-secondary text-light" value={adminPrice2} onChange={e => setAdminPrice2(e.target.value)} /></div>
-                  <div className="col-md-2"><label className="form-label text-light">3+ Fotos (€)</label><input type="number" step="0.01" className="form-control bg-black border-secondary text-light" value={adminPrice3} onChange={e => setAdminPrice3(e.target.value)} /></div>
+                  <div className="col-md-2"><label className="form-label text-light">3 Fotos (€)</label><input type="number" step="0.01" className="form-control bg-black border-secondary text-light" value={adminPrice3} onChange={e => setAdminPrice3(e.target.value)} /></div>
                   <div className="col-md-12"><label className="form-label text-light">Email de Recepción</label><input type="email" placeholder="recepcion@tuhotel.com" className="form-control bg-black border-secondary text-light" value={adminEmailRecepcion} onChange={e => setAdminEmailRecepcion(e.target.value)} /><div className="form-text text-secondary">Vale para todo el hotel: a esta dirección se enviará un aviso con miniaturas y copias cada vez que cualquier habitación envíe fotos. Los precios también son únicos para todas las habitaciones.</div></div>
                   <div className="col-md-12">
                     <div className="bg-black border border-secondary rounded-3 p-3">
@@ -942,7 +942,7 @@ export default function ViewerApp() {
         <div className="viewer-footer-content">
           {textos?.precio1 && <span className="price-badge">1 FOTO <span className="badge">{textos.precio1}€</span></span>}
           {textos?.precio2 && <span className="price-badge">2 FOTOS <span className="badge">{textos.precio2}€</span></span>}
-          {textos?.precio3 && <span className="price-badge">3+ FOTOS <span className="badge">{textos.precio3}€</span></span>}
+          {textos?.precio3 && <span className="price-badge">3 FOTOS <span className="badge">{textos.precio3}€</span></span>}
           {textos?.empresa && <span className="company-name">{textos.empresa}</span>}
           <span className="print-count">IMPRESAS HOY <span className="print-count-number">{printCount}</span></span>
         </div>
