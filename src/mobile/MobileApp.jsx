@@ -576,6 +576,10 @@ export default function MobileApp() {
           <div className="gallery-empty-state">
             <i className="bi bi-camera" />
             <p>Sube una foto de tu galería o haz una foto nueva para imprimirla en recepción.</p>
+            <div className="gallery-empty-actions">
+              <button className="btn btn-warning fw-bold" onClick={() => setStep(STEP_CAMERA)}><i className="bi bi-camera me-2" />Hacer foto</button>
+              <button className="btn btn-outline-warning fw-bold" onClick={() => galleryFileInputRef.current?.click()}><i className="bi bi-images me-2" />Subir foto extra</button>
+            </div>
           </div>
         ) : (
           <div className="gallery-grid">

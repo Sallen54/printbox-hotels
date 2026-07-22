@@ -5,7 +5,10 @@ pdf/
 PBAcount.txt
 *.log
 config/paypal.json
-.claude/settings.local.json
+
+# Cosas de Claude y auditorías internas: nunca al repo
+.claude/
+AUDITORIA_*.md
 
 # Secretos y datos reales de los hoteles (se generan con scripts/add-hotel.js y se
 # suben por FTP; nunca al repo): cuentas con hash bcrypt, secreto de sesión HMAC y
