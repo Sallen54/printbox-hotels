@@ -98,7 +98,19 @@ function pbhApiBase() {
 }
 
 $PRINTBOX_BASE = pbhApiBase();
-$cookiePath = __DIR__ . '/pba_cookies.txt'; // Guardar en la misma carpeta
+
+// Cookie jar de la sesión CSRF de Laravel: un fichero ÚNICO POR PETICIÓN. Compartir un
+// solo fichero entre todas las peticiones/clientes las hacía pisarse y corromper la sesión
+// → Laravel devolvía 419 a todos, sin arreglo desde el navegador (el estado malo vivía en
+// el servidor). Un temporal por request aísla cada uno.
+$cookiePath = tempnam(sys_get_temp_dir(), 'pbh_ck_');
+if ($cookiePath === false) {
+    // Fallback si el temp del sistema no es escribible (lo tapa el .htaccess: ^pba_cookies/.txt).
+    $cookiePath = __DIR__ . '/pba_cookies_' . getmypid() . '_' . mt_rand() . '.txt';
+}
+register_shutdown_function(function () use ($cookiePath) {
+    if ($cookiePath && file_exists($cookiePath)) @unlink($cookiePath);
+});
 
 // ── Diagnóstico ──
 if ($uri === '/proxy.php') {
@@ -491,8 +503,10 @@ function pbhReadPrices($configDir) {
             $key = trim(substr($line, 0, $pos));
             $val = trim(substr($line, $pos + 1));
             if (isset($prices[$key]) && $val !== '') {
-                $num = floatval(str_replace(',', '.', $val));
-                if ($num > 0) $prices[$key] = $num;
+                // Aceptar 0 (gratis): solo se descarta si no es numérico. Con `> 0` el 0 se
+                // ignoraba y se validaba contra el default → rechazaba el pago ("no coincide").
+                $clean = str_replace(',', '.', $val);
+                if (is_numeric($clean)) $prices[$key] = (float) $clean;
             }
         }
     }
@@ -545,7 +559,7 @@ function pbhCheckAmountCents($data, $amountCents, &$err) {
         $expected = max(0, $expected - pbhCouponDiscountCents($order, $expected));
 
         if ($amountCents !== $expected) {
-            $err = 'El importe no coincide con el pedido';
+            $err = sprintf('El importe no coincide con el pedido (esperado %.2f€, recibido %.2f€)', $expected / 100, $amountCents / 100);
             return false;
         }
         return true;
@@ -616,6 +630,19 @@ function proxyPost($url, $data, $extraHeaders = []) {
     curl_close($ch);
 
     return ['code' => $code, 'body' => $response, 'error' => $error];
+}
+
+// Como proxyPost pero reintenta una vez ante 419 (CSRF caducado): borra el cookie jar y
+// pide un csrf-cookie nuevo.
+function proxyPostRetry419($url, $data, $headers) {
+    global $cookiePath;
+    $result = proxyPost($url, $data, $headers);
+    if ((int)$result['code'] === 419) {
+        @unlink($cookiePath);
+        $csrf = getCsrfToken();
+        $result = proxyPost($url, $data, $csrf ? ['X-XSRF-TOKEN: ' . $csrf] : []);
+    }
+    return $result;
 }
 
 $body = file_get_contents('php://input');
@@ -978,7 +1005,7 @@ if (strpos($uri, '/printbox/') === 0) {
     $headers = $csrf ? ['X-XSRF-TOKEN: ' . $csrf] : [];
 
     if ($uri === '/printbox/find-event') {
-        $result = proxyPost($PRINTBOX_BASE . '/api/v1/events/find', $data, $headers);
+        $result = proxyPostRetry419($PRINTBOX_BASE . '/api/v1/events/find', $data, $headers);
         if ($result['error']) {
             http_response_code(500);
             echo json_encode(['error' => $result['error']]);
@@ -996,7 +1023,7 @@ if (strpos($uri, '/printbox/') === 0) {
 
     if ($uri === '/printbox/photos') {
         $page   = $_GET['page'] ?? 1;
-        $result = proxyPost($PRINTBOX_BASE . '/api/v1/events/photos?page=' . $page, $data, $headers);
+        $result = proxyPostRetry419($PRINTBOX_BASE . '/api/v1/events/photos?page=' . $page, $data, $headers);
         http_response_code($result['code'] ?: 500);
         echo $result['body'] ?: json_encode(['error' => 'Sin respuesta']);
         exit();

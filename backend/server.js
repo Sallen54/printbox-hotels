@@ -168,7 +168,7 @@ function checkAmount(req, amountCents) {
     }
     return amountCents === expected
       ? { ok: true }
-      : { ok: false, error: `Importe no coincide con el pedido (esperado ${expected} céntimos)` }
+      : { ok: false, error: `El importe no coincide con el pedido (esperado ${(expected / 100).toFixed(2)}€, recibido ${(amountCents / 100).toFixed(2)}€)` }
   }
 
   // Cliente antiguo sin desglose: al menos que no se pueda pagar 1 céntimo.

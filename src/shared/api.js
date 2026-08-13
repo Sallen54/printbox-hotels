@@ -338,31 +338,22 @@ export async function getPayPalConfig() {
 // `order` viaja para que el servidor pueda recalcular el importe (ver arriba).
 export async function processPayment({ token, amount, currency = 'EUR', order }) {
   const url = `${BACKEND_URL || ''}/process-payment`
-  try {
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      credentials: 'include',
-      body: JSON.stringify({ token, amount, currency, order }),
-    })
-    const data = await res.json()
-    
-    console.log('Square response:', { status: res.status, ok: res.ok, data })
-    
-    if (data?.errors) {
-      const errMsg = data.errors.map(e => e.detail || e.message || JSON.stringify(e)).join(', ')
-      throw new Error(`Square error: ${errMsg}`)
-    }
-    
-    if (!res.ok) {
-      throw new Error(data?.error || `HTTP ${res.status}: ${JSON.stringify(data)}`)
-    }
-    
-    return data
-  } catch (e) {
-    console.error('processPayment error:', e)
-    throw e
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify({ token, amount, currency, order }),
+  })
+  const data = await res.json()
+
+  if (data?.errors) {
+    const errMsg = data.errors.map(e => e.detail || e.message || JSON.stringify(e)).join(', ')
+    throw new Error(`Square error: ${errMsg}`)
   }
+  if (!res.ok) {
+    throw new Error(data?.error || `HTTP ${res.status}: ${JSON.stringify(data)}`)
+  }
+  return data
 }
 
 export async function sendPhoto({ event, image, times = 1, name, phone, print, orientation }) {

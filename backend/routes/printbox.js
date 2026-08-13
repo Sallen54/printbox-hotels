@@ -30,24 +30,25 @@ async function getCsrfToken() {
   return xsrf2 ? decodeURIComponent(xsrf2.value) : null
 }
 
-// Wrapper que hace POST con CSRF token y cookies de sesión
+// POST con token CSRF y cookies de sesión. Reintenta una vez ante 419 (CSRF caducado):
+// vacía el jar y vuelve a pedir el csrf-cookie.
 async function postWithCsrf(url, body) {
-  const csrfToken = await getCsrfToken()
-
-  const headers = {
-    'Content-Type': 'application/json',
-    'X-Requested-With': 'XMLHttpRequest',
-    'Accept': 'application/json',
+  const doPost = async () => {
+    const csrfToken = await getCsrfToken()
+    const headers = {
+      'Content-Type': 'application/json',
+      'X-Requested-With': 'XMLHttpRequest',
+      'Accept': 'application/json',
+    }
+    if (csrfToken) headers['X-XSRF-TOKEN'] = csrfToken
+    return fetchWithCookies(url, { method: 'POST', headers, body: JSON.stringify(body) })
   }
-  if (csrfToken) {
-    headers['X-XSRF-TOKEN'] = csrfToken
+  let r = await doPost()
+  if (r.status === 419) {
+    await new Promise((resolve) => cookieJar.removeAllCookies(() => resolve()))
+    r = await doPost()
   }
-
-  return fetchWithCookies(url, {
-    method: 'POST',
-    headers,
-    body: JSON.stringify(body),
-  })
+  return r
 }
 
 router.post('/find-event', async (req, res) => {

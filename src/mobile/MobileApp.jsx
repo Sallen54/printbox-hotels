@@ -45,6 +45,8 @@ export default function MobileApp() {
   const [eventError, setEventError] = useState('')
   const [uuid, setUuid] = useState(null)
   const [textos, setTextos] = useState({})
+  // Habitaciones [{ nombre, codigo }] para mostrar el nombre (no el código) en la cabecera.
+  const [habitaciones, setHabitaciones] = useState([])
   const [loading, setLoading] = useState(false)
   const [loadingFromQR, setLoadingFromQR] = useState(false)
   const [showTermsModal, setShowTermsModal] = useState(false)
@@ -67,7 +69,6 @@ export default function MobileApp() {
   const galleryFileInputRef = useRef(null)
 
   // --- Estados de envío y pago ---
-  const [sending, setSending] = useState(false)
   const [toast, setToast] = useState(null)
   const [squareCard, setSquareCard] = useState(null)
   const [squareError, setSquareError] = useState('')
@@ -87,6 +88,16 @@ export default function MobileApp() {
 
   // ── FUNCIONES AUXILIARES ──
   const normalizeEventCode = (code = '') => String(code).trim().replace(/^ev[-_]?/i, '')
+
+  // "Habitación <nombre>" (buscado por código); sin duplicar el prefijo si ya empieza por
+  // "Hab", y con el código de respaldo si la habitación no está registrada.
+  const roomLabel = (() => {
+    const code = normalizeEventCode(eventCode)
+    const room = habitaciones.find(h => normalizeEventCode(h.codigo) === code)
+    const nombre = room?.nombre?.trim()
+    if (!nombre) return `Habitación ${eventCode}`
+    return /^hab/i.test(nombre) ? nombre : `Habitación ${nombre}`
+  })()
 
   const showToast = (msg, duration = 3000) => {
     setToast(msg)
@@ -182,6 +193,7 @@ export default function MobileApp() {
     const h = new URLSearchParams(window.location.search).get('hotel') || ''
     getConfig(h).then(d => {
       setServiceUnavailable(d.config?.servicio_disponible === false)
+      if (d.habitaciones) setHabitaciones(d.habitaciones)
     }).catch(() => {})
   }, [])
 
@@ -194,6 +206,7 @@ export default function MobileApp() {
     const interval = setInterval(() => {
       getConfig(hotelId).then(d => {
         if (d.textos) applyTextos(d.textos)
+        if (d.habitaciones) setHabitaciones(d.habitaciones)
         setServiceUnavailable(d.config?.servicio_disponible === false)
         if (d.config?.evento_printer) {
           const printerCode = d.config.evento_printer.replace(/^ev[-_]?/i, '')
@@ -217,6 +230,13 @@ export default function MobileApp() {
       setPrinterUuid(printerUuidResult)
     } catch (e) { setPrinterUuid(null) }
   }, [])
+
+  // Refrescar precios al entrar al pedido: así el total mostrado coincide con el que el
+  // servidor valida al pagar (evita el "importe no coincide" por precios en caché).
+  useEffect(() => {
+    if (step !== STEP_ORDER) return
+    getConfig(hotelId).then(d => { if (d.textos) applyTextos(d.textos) }).catch(() => {})
+  }, [step])
 
   // Inicializar Square y PayPal en paso ORDER
   useEffect(() => {
@@ -353,6 +373,7 @@ export default function MobileApp() {
       uuidRef.current = id
       const configData = await getConfig(h)
       if (configData.textos) applyTextos(configData.textos)
+      if (configData.habitaciones) setHabitaciones(configData.habitaciones)
       if (configData.config?.evento_printer) {
         const printerCode = configData.config.evento_printer.replace(/^ev[-_]?/i, '')
         if (printerCode) {
@@ -429,13 +450,16 @@ export default function MobileApp() {
 
   // ── PEDIDO Y PAGO ──
   const totalCopies = capturedPhotos.map(p => p.copies).reduce((a,b) => a+b, 0)
+  // Acepta precio 0 (gratis); solo usa el default si no es un número. `parseFloat(x) || N`
+  // trataría el 0 como ausente.
+  const priceOr = (value, fallback) => {
+    const n = parseFloat(value)
+    return Number.isFinite(n) ? n : fallback
+  }
   const priceForPhoto = (copies) => {
     const c = Math.min(copies,3)
-    const p1 = parseFloat(textos.precio1) || 5
-    const p2 = parseFloat(textos.precio2) || 9
-    const p3 = parseFloat(textos.precio3) || 12
-    const prices = [0, p1, p2, p3]
-    return prices[c] || 0
+    const prices = [0, priceOr(textos.precio1, 5), priceOr(textos.precio2, 9), priceOr(textos.precio3, 12)]
+    return prices[c] ?? 0
   }
   const totalPrice = () => {
     return capturedPhotos.reduce((sum, p) => sum + priceForPhoto(p.copies), 0).toFixed(2)
@@ -494,13 +518,21 @@ export default function MobileApp() {
   }
 
   async function sendOrderPhotos({ paymentMethod = 'Tarjeta', amountPaid } = {}) {
-    const targetUuid = printerUuid || uuid
-    if (!targetUuid) throw new Error('No hay habitación destino')
+    // Cola de impresión (evento_printer) o, si no hay, la propia habitación: ahí van las copias.
+    const printTarget = printerUuid || uuid
+    if (!printTarget) throw new Error('No hay habitación destino')
+    // Si la cola es un evento distinto, mandamos además UNA copia a la habitación (sin
+    // imprimir) para que su Monitor también vea la foto.
+    const displayRoomUuid = (printerUuid && uuid && printerUuid !== uuid) ? uuid : null
     const notifyItems = []
     for (const photo of capturedPhotos) {
       for (let i = 0; i < (photo.copies || 1); i++) {
         const uniqueName = `c${Date.now()}${Math.random().toString(36).substr(2,9)}_${i+1}`
-        await sendPhoto({ event: targetUuid, image: photo.dataUrl, times: 1, name: uniqueName, phone: '000000000', orientation: 'portrait' })
+        await sendPhoto({ event: printTarget, image: photo.dataUrl, times: 1, name: uniqueName, phone: '000000000', orientation: 'portrait' })
+      }
+      if (displayRoomUuid) {
+        const dispName = `room${Date.now()}${Math.random().toString(36).substr(2,9)}`
+        await sendPhoto({ event: displayRoomUuid, image: photo.dataUrl, times: 1, name: dispName, phone: '000000000', orientation: 'portrait', print: false })
       }
       notifyItems.push({ thumbnail: await resizeImageBase64(photo.dataUrl, 300), copies: photo.copies || 1 })
     }
@@ -565,6 +597,7 @@ export default function MobileApp() {
         <div className="mobile-header d-flex align-items-center gap-3 justify-content-between">
           <img src={hotelLogoUrl(hotelId)} alt="Logo" className="mobile-header-ic-launcher-large" />
           <div className="flex-grow-1">
+            {eventCode && <div className="mobile-room-badge">{roomLabel}</div>}
             <div className="mobile-header-title"><span style={{fontSize:'1.2rem',marginRight:'6px'}}>🇪🇸</span> Sube o haz tus fotos para imprimir<br /><small className="text-muted"><span style={{fontSize:'1rem',marginRight:'6px'}}>🇬🇧</span> Upload or take your photos to print</small></div>
           </div>
           <input ref={galleryFileInputRef} type="file" accept="image/*" multiple style={{ display: 'none' }} onChange={handleGalleryFilesSelected} />
@@ -577,8 +610,8 @@ export default function MobileApp() {
             <i className="bi bi-camera" />
             <p>Sube una foto de tu galería o haz una foto nueva para imprimirla en recepción.</p>
             <div className="gallery-empty-actions">
-              <button className="btn btn-warning fw-bold" onClick={() => setStep(STEP_CAMERA)}><i className="bi bi-camera me-2" />Hacer foto</button>
-              <button className="btn btn-outline-warning fw-bold" onClick={() => galleryFileInputRef.current?.click()}><i className="bi bi-images me-2" />Subir foto extra</button>
+              <button className="btn btn-outline-warning fw-bold" onClick={() => galleryFileInputRef.current?.click()}><i className="bi bi-images me-2" />Subir foto</button>
+              <button className="btn btn-outline-warning fw-bold" onClick={() => setStep(STEP_CAMERA)}><i className="bi bi-camera me-2" />Hacer foto</button>
             </div>
           </div>
         ) : (
@@ -621,6 +654,7 @@ export default function MobileApp() {
         <div className="mobile-header d-flex align-items-center gap-2">
           <button className="btn btn-sm btn-outline-secondary" onClick={() => setStep(STEP_GALLERY)}><i className="bi bi-arrow-left" /></button>
           <span className="fw-bold" style={{color:'var(--pb-accent)'}}>Hacer foto</span>
+          {eventCode && <span className="mobile-room-badge">{roomLabel}</span>}
           <button className="btn btn-sm btn-outline-secondary ms-auto" onClick={flipCamera}><i className="bi bi-arrow-repeat" /></button>
         </div>
         <div className="camera-container">
@@ -642,26 +676,7 @@ export default function MobileApp() {
           )}
           {capturedPhotos.length > 0 && (
             <div className="d-flex gap-2 w-100" style={{flexDirection:'column'}}>
-              <button className="btn btn-success fw-bold w-100 continue-button" onClick={async () => {
-                setSending(true)
-                try {
-                  const notifyItems = []
-                  for (const photo of capturedPhotos) {
-                    const uniqueName = `c${Date.now()}${Math.random().toString(36).substr(2,9)}`
-                    await sendPhoto({ event: uuid, image: photo.dataUrl, times: photo.copies || 1, name: uniqueName, phone: '000000000', orientation: 'portrait' })
-                    notifyItems.push({ thumbnail: await resizeImageBase64(photo.dataUrl, 300), copies: photo.copies || 1 })
-                  }
-                  try {
-                    await notifyRoomOrder({ hotel: hotelId, room: normalizeEventCode(eventCode), items: notifyItems, total: '0.00', paymentMethod: 'Gratis (foto de cámara)' })
-                  } catch (e) { console.error('notifyRoomOrder error:', e) }
-                  showToast(`${capturedPhotos.length} foto(s) subida(s)`)
-                  setCapturedPhotos([])
-                } catch (e) { showToast(`Error: ${e.message}`) }
-                finally { setSending(false) }
-              }} disabled={sending}>
-                {sending ? <><span className="spinner-border spinner-border-sm me-2" /> Subiendo...</> : <><i className="bi bi-cloud-upload me-2" /> Subir fotos directamente</>}
-              </button>
-              <button className="btn btn-warning fw-bold w-100 continue-button" onClick={() => setStep(STEP_ORDER)} disabled={sending}>
+              <button className="btn btn-warning fw-bold w-100 continue-button" onClick={() => setStep(STEP_ORDER)}>
                 <i className="bi bi-bag-check me-2" />Hacer pedido ({capturedPhotos.length} foto{capturedPhotos.length > 1 ? 's' : ''})
               </button>
             </div>
@@ -678,6 +693,7 @@ export default function MobileApp() {
         <div className="mobile-header d-flex align-items-center gap-2">
           <button className="btn btn-sm btn-outline-secondary" onClick={() => setStep(STEP_GALLERY)}><i className="bi bi-arrow-left" /></button>
           <span className="fw-bold" style={{color:'var(--pb-accent)'}}>Tu pedido</span>
+          {eventCode && <span className="mobile-room-badge ms-auto">{roomLabel}</span>}
         </div>
         <div className="order-summary-container">
           {capturedPhotos.map(photo => (
@@ -741,24 +757,7 @@ export default function MobileApp() {
               </div>
             </div>
 
-            {/* PayPal */}
-            <div className="payment-method-card paypal-card">
-              <div className="payment-method-header">
-                <div className="payment-method-icon"><i className="bi bi-paypal"></i></div>
-                <div className="payment-method-info">
-                  <div className="payment-method-name">PayPal</div>
-                  <div className="payment-method-desc">Paga con tu cuenta PayPal o tarjeta</div>
-                </div>
-              </div>
-              <div className="payment-method-content">
-                {paypalError && <div className="text-danger text-center mb-2">{paypalError}</div>}
-                <div id="paypal-button-container" style={{ minHeight: '70px' }} />
-                {!paypalReady && !paypalError && <div className="text-center text-muted mb-2">Cargando PayPal...</div>}
-                {!paypalClientId && <div className="text-center text-muted mb-2">PayPal no configurado en el servidor.</div>}
-              </div>
-            </div>
-
-            {/* Tarjeta de crédito */}
+            {/* Tarjeta de crédito (arriba) */}
             <div className="payment-method-card card-payment-card">
               <div className="payment-method-header">
                 <div className="payment-method-icon"><i className="bi bi-credit-card"></i></div>
@@ -773,6 +772,23 @@ export default function MobileApp() {
                 <button className="btn btn-warning w-100 mt-3 fw-bold payment-btn" onClick={handleSquarePayment} disabled={squareLoading || !squareCard || totalCopies === 0}>
                   {squareLoading ? 'Procesando pago...' : `Pagar ${finalPrice}€`}
                 </button>
+              </div>
+            </div>
+
+            {/* PayPal (abajo) */}
+            <div className="payment-method-card paypal-card">
+              <div className="payment-method-header">
+                <div className="payment-method-icon"><i className="bi bi-paypal"></i></div>
+                <div className="payment-method-info">
+                  <div className="payment-method-name">PayPal</div>
+                  <div className="payment-method-desc">Paga con tu cuenta PayPal o tarjeta</div>
+                </div>
+              </div>
+              <div className="payment-method-content">
+                {paypalError && <div className="text-danger text-center mb-2">{paypalError}</div>}
+                <div id="paypal-button-container" style={{ minHeight: '70px' }} />
+                {!paypalReady && !paypalError && <div className="text-center text-muted mb-2">Cargando PayPal...</div>}
+                {!paypalClientId && <div className="text-center text-muted mb-2">PayPal no configurado en el servidor.</div>}
               </div>
             </div>
           </div>

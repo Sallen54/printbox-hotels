@@ -706,6 +706,15 @@
 .viewer-app .form-control::placeholder {
   color: #b3a684;
 }
+/* Autofill del navegador: el box-shadow inset es la única forma de tapar su fondo gris. */
+.viewer-app .form-control:-webkit-autofill,
+.viewer-app .form-control:-webkit-autofill:hover,
+.viewer-app .form-control:-webkit-autofill:focus {
+  -webkit-box-shadow: 0 0 0 1000px #f8f1e2 inset !important;
+  -webkit-text-fill-color: #2b2013 !important;
+  caret-color: #2b2013;
+  transition: background-color 9999s ease-in-out 0s;
+}
 .viewer-app .input-group-text.text-warning {
   color: #a07a24 !important;
 }

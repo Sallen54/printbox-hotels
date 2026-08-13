@@ -241,10 +241,22 @@ export default function ViewerApp() {
     .map(r => ({ nombre: r.nombre.trim(), codigo: r.codigo.trim() }))
     .filter(r => r.codigo)
 
+  // Primer código repetido entre habitaciones (o null): no pueden compartir código de evento.
+  const duplicateRoomCode = (rooms) => {
+    const seen = new Set()
+    for (const r of rooms) {
+      if (seen.has(r.codigo)) return r.codigo
+      seen.add(r.codigo)
+    }
+    return null
+  }
+
   // ── ASISTENTE DE PRIMERA CONFIGURACIÓN ──
   async function handleWizardFinish() {
     const rooms = validRooms(wizardRooms)
     if (!rooms.length) { setWizardError('Añade al menos una habitación con su código'); return }
+    const dupW = duplicateRoomCode(rooms)
+    if (dupW) { setWizardError(`Hay dos habitaciones con el mismo código (${dupW}). Cada habitación debe tener un código distinto.`); return }
     setWizardError('')
     setWizardSaving(true)
     try {
@@ -298,6 +310,8 @@ export default function ViewerApp() {
   async function handleSaveAdminConfig() {
     const rooms = validRooms(adminRooms)
     if (!rooms.length) { setAdminError('Añade al menos una habitación con su código'); return }
+    const dup = duplicateRoomCode(rooms)
+    if (dup) { setAdminError(`Hay dos habitaciones con el mismo código (${dup}). Cada habitación debe tener un código distinto.`); return }
     // La habitación monitorizada debe ser una de las registradas
     const monitorCode = rooms.some(r => r.codigo === adminEventCode) ? adminEventCode : rooms[0].codigo
     const newConfig = { ...config, evento: `ev-${monitorCode}`, evento_printer: adminPrinterEventCode ? `ev-${adminPrinterEventCode}` : '', servicio_disponible: adminServicioDisponible }
@@ -335,11 +349,21 @@ export default function ViewerApp() {
   }
 
   // ── FOTOS ──
-  useEffect(() => { if (!config?.evento) return; findEvent(config.evento).then(setUuid).catch(e => setError(`No se pudo conectar: ${e.message}`)) }, [config?.evento])
+  // Limpiar uuid y galería ANTES de resolver el nuevo evento: si find-event falla (419 o
+  // habitación inexistente) no debe quedarse pegada la galería de la habitación anterior.
+  useEffect(() => {
+    if (!config?.evento) { setUuid(null); setAllPhotos([]); return }
+    setUuid(null); setAllPhotos([])
+    findEvent(config.evento)
+      .then(setUuid)
+      .catch(e => { setError(`No se pudo conectar: ${e.message}`); setUuid(null); setAllPhotos([]) })
+  }, [config?.evento])
 
-  const loadAllPhotos = useCallback(async (localPage = 1) => {
+  // silent=true → refresco de fondo: no pone loading ni borra la galería (si no, parpadeaba
+  // a "Cargando fotos…" en cada ciclo).
+  const loadAllPhotos = useCallback(async (localPage = 1, silent = false) => {
     if (!uuid) return
-    setLoading(true)
+    if (!silent) setLoading(true)
     try {
       const remoteStart = (localPage - 1) * 2 + 1
       let resultPhotos = []
@@ -360,14 +384,25 @@ export default function ViewerApp() {
       const calculatedLast = Math.max(1, Math.ceil((remoteLastPage * (remotePerPage || 10)) / 20))
       setLastPage(calculatedLast)
       setError(null)
-    } catch (e) { setError(`Error al cargar fotos: ${e.message}`); setAllPhotos([]) }
-    finally { setLoading(false) }
+    } catch (e) {
+      // En refresco de fondo, un fallo puntual no borra la galería: se reintenta al siguiente ciclo.
+      if (!silent) { setError(`Error al cargar fotos: ${e.message}`); setAllPhotos([]) }
+    }
+    finally { if (!silent) setLoading(false) }
   }, [uuid])
 
   useEffect(() => { loadAllPhotos(currentPage).catch(e => setError(`Error al cargar fotos: ${e?.message || e}`)) }, [loadAllPhotos, currentPage])
 
   // Autoplay
   useInterval(() => { if (autoplay) setCurrentPage(p => (p < lastPage ? p + 1 : 1)) }, autoplay ? 15000 : null)
+
+  // Auto-refresco cada 20s para que aparezcan las fotos nuevas de los huéspedes. Se pausa si
+  // hay un modal abierto para no interrumpir al recepcionista.
+  useInterval(() => {
+    if (uuid && !loading && !selectedPhoto && !showAdminConfig && !showSetupWizard && !showEventModal) {
+      loadAllPhotos(currentPage, true).catch(() => {})
+    }
+  }, uuid ? 20000 : null)
 
   // ── HELPERS DE PRECIO ──
   function getPrecio(n) {
@@ -875,20 +910,20 @@ export default function ViewerApp() {
             {uuid && <div className="header-hotel-subtitle">MONITOR · {currentRoomLabel}</div>}
           </div>
           <div className="viewer-header-right">
-            {uuid && (
-              <div className="viewer-header-actions">
-                {config?.servicio_disponible === false && (
-                  <span className="badge service-disabled-badge"><i className="bi bi-exclamation-triangle-fill me-1" />Servicio desactivado para los huéspedes</span>
-                )}
-                <button className="btn btn-sm header-action-btn" onClick={() => setShowEventModal(true)} title="Cambiar la habitación que muestra el monitor"><i className="bi bi-door-open me-1" />{currentRoomLabel}</button>
-                <button className={`btn btn-sm header-action-btn ${autoplay ? 'header-action-btn-active' : ''}`} onClick={() => setAutoplay(!autoplay)} title={autoplay ? 'Detener autoplay' : 'Iniciar autoplay (15s por página)'}><i className={`bi ${autoplay ? 'bi-pause-circle-fill' : 'bi-play-circle-fill'} me-1`} />{autoplay ? 'Autoplay ON' : 'Autoplay'}</button>
-                <button className="btn btn-sm header-action-btn" onClick={() => setQrRoom(currentRoom || { nombre: '', codigo: currentRoomCode })} title="Mostrar QR de la habitación actual"><i className="bi bi-qr-code me-1" />Ver QR</button>
-                <button className="btn btn-sm header-action-btn" onClick={() => setShowPrivacyModal(true)}><i className="bi bi-info-circle me-1" /> Términos</button>
-                <button className="btn btn-sm header-action-btn" onClick={openAdmin}><i className="bi bi-gear me-1" /> Admin</button>
-                <button className="btn btn-sm header-action-btn" onClick={handleLogout} title={`Sesión: ${session?.nombre || session?.hotelId || ''}`}><i className="bi bi-box-arrow-right me-1" /> Salir</button>
-                <button className="btn btn-sm header-action-btn" onClick={() => loadAllPhotos(currentPage)} disabled={loading}><i className={`bi ${loading ? 'bi-hourglass-split spin' : 'bi-arrow-repeat'} me-1`} />{loading ? 'Cargando...' : 'Actualizar'}</button>
-              </div>
-            )}
+            {/* Cambiar habitación / Admin / Salir van SIEMPRE (aunque find-event falle y uuid
+                sea null), o el recepcionista se quedaría atascado. El resto se oculta sin uuid. */}
+            <div className="viewer-header-actions">
+              {uuid && config?.servicio_disponible === false && (
+                <span className="badge service-disabled-badge"><i className="bi bi-exclamation-triangle-fill me-1" />Servicio desactivado para los huéspedes</span>
+              )}
+              <button className="btn btn-sm header-action-btn" onClick={() => setShowEventModal(true)} title="Cambiar la habitación que muestra el monitor"><i className="bi bi-door-open me-1" />{uuid ? currentRoomLabel : 'Elegir habitación'}</button>
+              {uuid && <button className={`btn btn-sm header-action-btn ${autoplay ? 'header-action-btn-active' : ''}`} onClick={() => setAutoplay(!autoplay)} title={autoplay ? 'Detener autoplay' : 'Iniciar autoplay (15s por página)'}><i className={`bi ${autoplay ? 'bi-pause-circle-fill' : 'bi-play-circle-fill'} me-1`} />{autoplay ? 'Autoplay ON' : 'Autoplay'}</button>}
+              {uuid && <button className="btn btn-sm header-action-btn" onClick={() => setQrRoom(currentRoom || { nombre: '', codigo: currentRoomCode })} title="Mostrar QR de la habitación actual"><i className="bi bi-qr-code me-1" />Ver QR</button>}
+              <button className="btn btn-sm header-action-btn" onClick={() => setShowPrivacyModal(true)}><i className="bi bi-info-circle me-1" /> Términos</button>
+              <button className="btn btn-sm header-action-btn" onClick={openAdmin}><i className="bi bi-gear me-1" /> Admin</button>
+              <button className="btn btn-sm header-action-btn" onClick={handleLogout} title={`Sesión: ${session?.nombre || session?.hotelId || ''}`}><i className="bi bi-box-arrow-right me-1" /> Salir</button>
+              {uuid && <button className="btn btn-sm header-action-btn" onClick={() => loadAllPhotos(currentPage)} disabled={loading}><i className={`bi ${loading ? 'bi-hourglass-split spin' : 'bi-arrow-repeat'} me-1`} />{loading ? 'Cargando...' : 'Actualizar'}</button>}
+            </div>
           </div>
         </div>
         {error && <div className="alert alert-danger viewer-error-alert">{error}</div>}

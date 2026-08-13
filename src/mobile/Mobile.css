@@ -130,6 +130,19 @@ body:has(.camera-container) {
   color: var(--mv-text-muted) !important;
 }
 
+/* Distintivo con el número de habitación (del QR ?habitacion=) */
+.mobile-room-badge {
+  display: inline-block;
+  background: var(--pb-accent, #c9a24b);
+  color: #fff;
+  font-weight: 700;
+  font-size: 12px;
+  padding: 2px 10px;
+  border-radius: 999px;
+  margin-bottom: 4px;
+  white-space: nowrap;
+}
+
 .mobile-header-subtitle {
   font-size: 11px;
   color: var(--mv-text-muted);
