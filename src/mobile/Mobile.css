@@ -47,6 +47,17 @@ body {
   touch-action: manipulation;
 }
 
+/* Excepción al user-select: none global (que protege las fotos): el texto legal y la
+   ayuda de cupones sí deben poder copiarse. */
+.terms-modal-content,
+.terms-modal-content * {
+  -webkit-user-select: text;
+  -moz-user-select: text;
+  -ms-user-select: text;
+  user-select: text;
+  -webkit-touch-callout: default;
+}
+
 /* Fondo del documento en crema cuando se muestra el móvil */
 body:has(.mobile-app) {
   background: var(--pb-bg, #efe6d2);
@@ -763,6 +774,60 @@ body:has(.camera-container) {
   align-items: center;
   justify-content: center;
   gap: 8px;
+}
+
+/* Selector de método de pago: se muestra solo el formulario elegido, para no tener a la
+   vez el de tarjeta y el de PayPal (resultaba abrumador y confuso). */
+.pay-method-chooser {
+  margin-bottom: 14px;
+}
+
+.pay-method-question {
+  font-family: 'Marcellus', serif;
+  font-size: 17px;
+  color: var(--mv-text-dark);
+  text-align: center;
+  margin: 0 0 10px;
+}
+
+.pay-method-tabs {
+  display: flex;
+  gap: 10px;
+}
+
+.pay-method-tab {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 12px 8px;
+  background: var(--mv-card);
+  border: 1.5px solid rgba(176, 138, 53, 0.35);
+  border-radius: 14px;
+  color: var(--mv-text-muted);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s, background 0.15s;
+}
+
+.pay-method-tab i {
+  font-size: 22px;
+}
+
+.pay-method-tab.active {
+  border-color: var(--pb-accent, #c9a24b);
+  background: #fffdf7;
+  color: var(--mv-text-dark);
+  box-shadow: 0 0 0 3px rgba(201, 162, 75, 0.15);
+}
+
+.pay-method-note {
+  margin: 10px 0 0;
+  text-align: center;
+  font-size: 12px;
+  color: var(--mv-text-muted);
 }
 
 .payment-method-card {

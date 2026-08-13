@@ -135,7 +135,7 @@ function getSquareCredentials() {
 // recalcula aquí a partir de los precios del hotel y el desglose de copias que
 // acompaña al pago (`order`). Misma lógica que en proxy.php: mantener ambos a la par.
 function readHotelPrices(hotelId) {
-  const prices = { precio1: 5, precio2: 9, precio3: 12 }
+  const prices = { precio1: 1.20, precio2: 2.40, precio3: 3.60 }
   try {
     const dir = resolveHotelDir(baseConfigDir, hotelId)
     const f = path.join(dir, 'textos.txt')

@@ -800,3 +800,64 @@
 .viewer-app .spinner-border.text-warning {
   color: #b08a35 !important;
 }
+
+/* Guía de cupones del panel: la lee recepción, así que va destacada sobre el formulario. */
+.coupon-help {
+  background: #f8f1e2;
+  border: 1px solid rgba(176, 138, 53, 0.35);
+  border-left: 4px solid #b08a35;
+  border-radius: 12px;
+  padding: 14px 16px;
+}
+
+.coupon-help-title {
+  font-family: 'Marcellus', serif;
+  font-size: 16px;
+  color: #2b2013;
+  margin-bottom: 8px;
+}
+
+.coupon-help-text {
+  font-size: 13px;
+  line-height: 1.55;
+  color: #4a3c28;
+  margin-bottom: 10px;
+}
+
+.coupon-help-types {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.coupon-help-type {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: #4a3c28;
+}
+
+.coupon-help-badge {
+  flex-shrink: 0;
+  background: #b08a35;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  padding: 3px 9px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+.coupon-help-warn {
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: #8a5a1a;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px dashed rgba(176, 138, 53, 0.4);
+}

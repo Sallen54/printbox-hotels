@@ -29,6 +29,10 @@ const STEP_CAMERA = 'camera'
 const STEP_ORDER = 'order'
 const STEP_SUCCESS = 'success'
 
+// El huésped sube desde la galería (el selector del móvil ya deja hacer una foto). El flujo
+// STEP_CAMERA se conserva entero: poner esto a true lo reactiva.
+const CAMARA_HABILITADA = false
+
 // ── CONSTANTES DE SQUARE ──
 const SQUARE_APP_ID = 'sq0idp-OV9y595m1kR_UU3QRest7Q'
 const SQUARE_LOCATION_ID = 'LHB32XGQK68GX'
@@ -53,7 +57,6 @@ export default function MobileApp() {
   const [serviceUnavailable, setServiceUnavailable] = useState(false)
 
   // --- Estados de habitación/impresora ---
-  const uuidRef = useRef(null)
   const [printerUuid, setPrinterUuid] = useState(null)
   const lastPrinterCodeRef = useRef(null)
 
@@ -61,7 +64,6 @@ export default function MobileApp() {
   const videoRef = useRef(null)
   const canvasRef = useRef(null)
   const streamRef = useRef(null)
-  const [cameraOn, setCameraOn] = useState(false)
   const [facingMode, setFacingMode] = useState('environment')
   const [capturedPhotos, setCapturedPhotos] = useState([])
 
@@ -70,13 +72,13 @@ export default function MobileApp() {
 
   // --- Estados de envío y pago ---
   const [toast, setToast] = useState(null)
+  const [payMethod, setPayMethod] = useState('card') // 'card' | 'paypal' — solo se monta el elegido
   const [squareCard, setSquareCard] = useState(null)
   const [squareError, setSquareError] = useState('')
   const [squareLoading, setSquareLoading] = useState(false)
   const [paypalClientId, setPaypalClientId] = useState('')
   const [paypalReady, setPaypalReady] = useState(false)
   const [paypalError, setPaypalError] = useState('')
-  const [paypalLoading, setPaypalLoading] = useState(false)
   const paypalButtonsRef = useRef(null)
 
   // --- Estados de cupón (descuento/pago completo) ---
@@ -107,9 +109,9 @@ export default function MobileApp() {
   const applyTextos = (incoming) => {
     if (!incoming) return
     setTextos(prev => ({
-      precio1: (incoming.precio1?.trim()) || prev?.precio1 || '5',
-      precio2: (incoming.precio2?.trim()) || prev?.precio2 || '9',
-      precio3: (incoming.precio3?.trim()) || prev?.precio3 || '12',
+      precio1: (incoming.precio1?.trim()) || prev?.precio1 || '1.20',
+      precio2: (incoming.precio2?.trim()) || prev?.precio2 || '2.40',
+      precio3: (incoming.precio3?.trim()) || prev?.precio3 || '3.60',
       text_es: incoming.text_es || prev?.text_es || '',
       text_en: incoming.text_en || prev?.text_en || '',
       text_fr: incoming.text_fr || prev?.text_fr || '',
@@ -238,24 +240,33 @@ export default function MobileApp() {
     getConfig(hotelId).then(d => { if (d.textos) applyTextos(d.textos) }).catch(() => {})
   }, [step])
 
-  // Inicializar Square y PayPal en paso ORDER
-  useEffect(() => {
-    if (step !== STEP_ORDER) return
+  // Solo se monta la pasarela elegida y solo si hay algo que cobrar (finalCents se lee dentro
+  // del efecto, donde ya está inicializado).
+    useEffect(() => {
+    if (step !== STEP_ORDER || payMethod !== 'card' || finalCents === 0) return
+    let cancelled = false
+    let card = null
     const initSquare = async () => {
       if (!window.Square) { setSquareError('Pasarela no cargada'); return }
       try {
         const payments = window.Square.payments(SQUARE_APP_ID, SQUARE_LOCATION_ID)
-        const card = await payments.card()
+        card = await payments.card()
+        if (cancelled) { try { await card.destroy() } catch {} ; return }
         await card.attach('#card-container')
         setSquareCard(card)
         setSquareError('')
-      } catch (e) { setSquareError(e.message) }
+      } catch (e) { if (!cancelled) setSquareError(e.message) }
     }
     initSquare()
-  }, [step])
+    return () => {
+      cancelled = true
+      try { card?.destroy?.() } catch {}
+      setSquareCard(null)
+    }
+  }, [step, payMethod, appliedCoupon])
 
   useEffect(() => {
-    if (step !== STEP_ORDER) return
+    if (step !== STEP_ORDER || payMethod !== 'paypal' || finalCents === 0) return
     let cancelled = false
     const loadPayPalScript = (clientId) => {
       return new Promise((resolve, reject) => {
@@ -291,7 +302,6 @@ export default function MobileApp() {
             return await createPayPalOrder({ amount: finalAmount, currency: 'EUR', order: orderPayload() })
           },
           onApprove: async (data) => {
-            setPaypalLoading(true)
             try {
               await capturePayPalOrder(data.orderID)
               if (appliedCoupon) {
@@ -302,20 +312,29 @@ export default function MobileApp() {
               setStep(STEP_SUCCESS)
             } catch (error) {
               setPaypalError(error.message)
-            } finally { setPaypalLoading(false) }
+            }
           },
           onError: (error) => setPaypalError(error?.message || 'Error en PayPal'),
           onCancel: () => showToast('Pago cancelado')
         })
         if (cancelled) return
         paypalButtonsRef.current = buttons
+        // El efecto se repite al aplicar/quitar cupón: sin vaciar, los botones se acumulan.
+                const container = document.getElementById('paypal-button-container')
+        if (container) container.innerHTML = ''
         await buttons.render('#paypal-button-container')
         setPaypalReady(true)
       } catch (e) { setPaypalError(e.message) }
     }
     initPayPal()
-    return () => { cancelled = true }
-  }, [step, appliedCoupon])
+    return () => {
+      cancelled = true
+      try { paypalButtonsRef.current?.close?.() } catch {}
+      paypalButtonsRef.current = null
+      const container = document.getElementById('paypal-button-container')
+      if (container) container.innerHTML = ''
+    }
+  }, [step, payMethod, appliedCoupon])
 
   // ── CUPONES (proxy.php) ──
   const validateCoupon = async (code) => {
@@ -370,7 +389,6 @@ export default function MobileApp() {
     try {
       const id = await findEvent(`ev-${eventCodeToUse}`)
       setUuid(id)
-      uuidRef.current = id
       const configData = await getConfig(h)
       if (configData.textos) applyTextos(configData.textos)
       if (configData.habitaciones) setHabitaciones(configData.habitaciones)
@@ -397,13 +415,11 @@ export default function MobileApp() {
       const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode }, audio: false })
       streamRef.current = stream
       if (videoRef.current) videoRef.current.srcObject = stream
-      setCameraOn(true)
     } catch { showToast('No se puede acceder a la cámara') }
   }
   function stopCamera() {
     streamRef.current?.getTracks().forEach(t => t.stop())
     streamRef.current = null
-    setCameraOn(false)
   }
   async function capturePhoto() {
     const video = videoRef.current, canvas = canvasRef.current
@@ -458,7 +474,7 @@ export default function MobileApp() {
   }
   const priceForPhoto = (copies) => {
     const c = Math.min(copies,3)
-    const prices = [0, priceOr(textos.precio1, 5), priceOr(textos.precio2, 9), priceOr(textos.precio3, 12)]
+    const prices = [0, priceOr(textos.precio1, 1.20), priceOr(textos.precio2, 2.40), priceOr(textos.precio3, 3.60)]
     return prices[c] ?? 0
   }
   const totalPrice = () => {
@@ -485,6 +501,21 @@ export default function MobileApp() {
   const discountCents = couponDiscountCents(totalCents)
   const finalCents = Math.max(0, totalCents - discountCents)
   const finalPrice = (finalCents / 100).toFixed(2)
+
+  // El cupón cubre el total: no hay pasarela de por medio, solo canjear y enviar.
+  const handleFreeOrder = async () => {
+    setSquareLoading(true)
+    setSquareError('')
+    try {
+      if (appliedCoupon) await redeemCoupon(couponCode, `mobile_${Date.now()}`)
+      await sendOrderPhotos({ paymentMethod: 'Cupón (pago completo)', amountPaid: '0.00' })
+      setStep(STEP_SUCCESS)
+    } catch (e) {
+      setSquareError(`Error: ${e.message}`)
+    } finally {
+      setSquareLoading(false)
+    }
+  }
 
   const handleSquarePayment = async () => {
     if (!squareCard) { setSquareError('Pasarela no inicializada'); return }
@@ -602,16 +633,16 @@ export default function MobileApp() {
           </div>
           <input ref={galleryFileInputRef} type="file" accept="image/*" multiple style={{ display: 'none' }} onChange={handleGalleryFilesSelected} />
           <button className="btn btn-sm btn-outline-warning" title="Subir de tu galería" style={{fontSize:'18px',padding:'2px 6px'}} onClick={() => galleryFileInputRef.current?.click()}><i className="bi bi-images" /></button>
-          <button className="btn btn-sm btn-outline-warning" title="Hacer foto" style={{fontSize:'18px',padding:'2px 6px'}} onClick={() => setStep(STEP_CAMERA)}><i className="bi bi-camera" /></button>
+          {CAMARA_HABILITADA && <button className="btn btn-sm btn-outline-warning" title="Hacer foto" style={{fontSize:'18px',padding:'2px 6px'}} onClick={() => setStep(STEP_CAMERA)}><i className="bi bi-camera" /></button>}
           <button className="btn btn-sm btn-outline-warning" title="Términos" style={{fontSize:'18px',padding:'2px 6px'}} onClick={() => setShowTermsModal(true)}><i className="bi bi-info-circle" /></button>
         </div>
         {capturedPhotos.length === 0 ? (
           <div className="gallery-empty-state">
             <i className="bi bi-camera" />
-            <p>Sube una foto de tu galería o haz una foto nueva para imprimirla en recepción.</p>
+            <p>Sube una foto de tu galería para imprimirla en recepción.</p>
             <div className="gallery-empty-actions">
               <button className="btn btn-outline-warning fw-bold" onClick={() => galleryFileInputRef.current?.click()}><i className="bi bi-images me-2" />Subir foto</button>
-              <button className="btn btn-outline-warning fw-bold" onClick={() => setStep(STEP_CAMERA)}><i className="bi bi-camera me-2" />Hacer foto</button>
+              {CAMARA_HABILITADA && <button className="btn btn-outline-warning fw-bold" onClick={() => setStep(STEP_CAMERA)}><i className="bi bi-camera me-2" />Hacer foto</button>}
             </div>
           </div>
         ) : (
@@ -633,8 +664,25 @@ export default function MobileApp() {
         {showTermsModal && (
           <div className="terms-modal-overlay" onClick={() => setShowTermsModal(false)}>
             <div className="terms-modal-content" onClick={e=>e.stopPropagation()}>
-              <div className="terms-modal-header"><h5>Términos y condiciones</h5><button className="terms-modal-close" onClick={()=>setShowTermsModal(false)}>&times;</button></div>
+              <div className="terms-modal-header"><h5>Información y condiciones</h5><button className="terms-modal-close" onClick={()=>setShowTermsModal(false)}>&times;</button></div>
               <div className="terms-modal-body">
+                <p><strong>¿Cómo funciona?</strong></p>
+                <ol style={{paddingLeft:'1.1rem',margin:'0 0 12px'}}>
+                  <li>Pulsa <strong>Subir foto</strong> y elige las fotos de tu móvil.</li>
+                  <li>Elige cuántas <strong>copias</strong> quieres de cada una.</li>
+                  <li>Paga con <strong>tarjeta</strong> o <strong>PayPal</strong>.</li>
+                  <li>Recoge tus fotos impresas en <strong>recepción</strong>.</li>
+                </ol>
+
+                <p><strong>¿Qué es un cupón?</strong></p>
+                <p>Es un código que te da el hotel para que pagues menos (o nada). Hay dos tipos:</p>
+                <ul style={{paddingLeft:'1.1rem',margin:'0 0 8px'}}>
+                  <li><strong>De descuento:</strong> te resta dinero del total. Si tu pedido son 3,60&nbsp;€ y el cupón es de 1,00&nbsp;€, pagas 2,60&nbsp;€ con tarjeta.</li>
+                  <li><strong>De pago completo:</strong> cubre todo el pedido y <strong>no pagas nada</strong>.</li>
+                </ul>
+                <p><strong>Cómo usarlo:</strong> escribe el código en la casilla <em>Cupón</em> de la pantalla del pedido y pulsa <strong>Aplicar</strong>. Verás el total actualizado al instante.</p>
+                <p style={{marginBottom:12}}><strong>Ojo:</strong> cada cupón sirve <strong>una sola vez</strong>, caduca, y solo vale para la habitación para la que se creó. Si te da error, pide uno nuevo en recepción.</p>
+
                 <p><strong>Tus fotos están protegidas.</strong> No almacenamos datos personales ni compartimos tus imágenes.</p>
                 <p>Los pagos se procesan de forma segura a través de <strong>Square</strong> y <strong>PayPal</strong>.</p>
                 <p>Al usar este servicio, aceptas que las fotos seleccionadas se impriman en recepción.</p>
@@ -757,44 +805,65 @@ export default function MobileApp() {
               </div>
             </div>
 
-            {/* Tarjeta de crédito (arriba) */}
-            <div className="payment-method-card card-payment-card">
-              <div className="payment-method-header">
-                <div className="payment-method-icon"><i className="bi bi-credit-card"></i></div>
-                <div className="payment-method-info">
-                  <div className="payment-method-name">Tarjeta de Crédito/Débito</div>
-                  <div className="payment-method-desc">Visa, Mastercard, American Express</div>
+            {/* Con el pedido ya cubierto por el cupón no se muestra ninguna pasarela. */}
+            {finalCents === 0 ? (
+              <div className="payment-method-card">
+                <div className="payment-method-content text-center">
+                  <i className="bi bi-check-circle-fill text-success" style={{ fontSize: 34 }} />
+                  <p className="fw-bold mt-2 mb-1">No tienes que pagar nada</p>
+                  <p className="text-muted mb-3" style={{ fontSize: 14 }}>Tu cupón cubre el pedido completo.</p>
+                  {squareError && <div className="text-danger mb-2">{squareError}</div>}
+                  <button className="btn btn-warning w-100 fw-bold payment-btn" onClick={handleFreeOrder} disabled={squareLoading || totalCopies === 0}>
+                    {squareLoading ? <><span className="spinner-border spinner-border-sm me-2" />Enviando…</> : <><i className="bi bi-send me-2" />Enviar pedido</>}
+                  </button>
                 </div>
               </div>
-              <div className="payment-method-content">
-                <div id="card-container" style={{ minHeight: '170px' }}></div>
-                {squareError && <div className="text-danger text-center mt-2">{squareError}</div>}
-                <button className="btn btn-warning w-100 mt-3 fw-bold payment-btn" onClick={handleSquarePayment} disabled={squareLoading || !squareCard || totalCopies === 0}>
-                  {squareLoading ? 'Procesando pago...' : `Pagar ${finalPrice}€`}
-                </button>
-              </div>
-            </div>
+            ) : (
+              <>
+                <div className="pay-method-chooser">
+                  <p className="pay-method-question">¿Cómo quieres pagar?</p>
+                  <div className="pay-method-tabs">
+                    <button className={`pay-method-tab ${payMethod === 'card' ? 'active' : ''}`} onClick={() => setPayMethod('card')}>
+                      <i className="bi bi-credit-card-2-front" />
+                      <span>Tarjeta</span>
+                    </button>
+                    <button className={`pay-method-tab ${payMethod === 'paypal' ? 'active' : ''}`} onClick={() => setPayMethod('paypal')}>
+                      <i className="bi bi-paypal" />
+                      <span>PayPal</span>
+                    </button>
+                  </div>
+                </div>
 
-            {/* PayPal (abajo) */}
-            <div className="payment-method-card paypal-card">
-              <div className="payment-method-header">
-                <div className="payment-method-icon"><i className="bi bi-paypal"></i></div>
-                <div className="payment-method-info">
-                  <div className="payment-method-name">PayPal</div>
-                  <div className="payment-method-desc">Paga con tu cuenta PayPal o tarjeta</div>
-                </div>
-              </div>
-              <div className="payment-method-content">
-                {paypalError && <div className="text-danger text-center mb-2">{paypalError}</div>}
-                <div id="paypal-button-container" style={{ minHeight: '70px' }} />
-                {!paypalReady && !paypalError && <div className="text-center text-muted mb-2">Cargando PayPal...</div>}
-                {!paypalClientId && <div className="text-center text-muted mb-2">PayPal no configurado en el servidor.</div>}
-              </div>
+                {payMethod === 'card' ? (
+                  <div className="payment-method-card card-payment-card">
+                    <div className="payment-method-content">
+                      <div id="card-container" style={{ minHeight: '150px' }}></div>
+                      {squareError && <div className="text-danger text-center mt-2">{squareError}</div>}
+                      <button className="btn btn-warning w-100 mt-3 fw-bold payment-btn" onClick={handleSquarePayment} disabled={squareLoading || !squareCard || totalCopies === 0}>
+                        {squareLoading ? <><span className="spinner-border spinner-border-sm me-2" />Procesando…</> : `Pagar ${finalPrice}€`}
+                      </button>
+                      <p className="pay-method-note"><i className="bi bi-shield-lock me-1" />Visa · Mastercard · American Express</p>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="payment-method-card paypal-card">
+                    <div className="payment-method-content">
+                      {paypalError && <div className="text-danger text-center mb-2">{paypalError}</div>}
+                      <div id="paypal-button-container" style={{ minHeight: '70px' }} />
+                      {!paypalReady && !paypalError && <div className="text-center text-muted">Cargando PayPal…</div>}
+                      {!paypalClientId && <div className="text-center text-muted">PayPal no configurado en el servidor.</div>}
+                      <p className="pay-method-note"><i className="bi bi-shield-lock me-1" />Paga con tu cuenta de PayPal o con tarjeta</p>
+                    </div>
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+          {finalCents > 0 && (
+            <div className="alert alert-secondary order-payment-note">
+              <i className="bi bi-lock-fill text-warning" /> Pago seguro. No guardamos los datos de tu tarjeta.
             </div>
-          </div>
-          <div className="alert alert-secondary order-payment-note">
-            <i className="bi bi-credit-card text-warning" /> Pago seguro con tarjeta de crédito o PayPal
-          </div>
+          )}
         </div>
         {toast && <div className="mobile-toast">{toast}</div>}
       </div>

@@ -17,10 +17,19 @@ const SECRET_PATTERNS = [
   /^square\.json$/i,
   /^paypal\.json$/i,
   /^session_secret\.txt$/i,
-  /^hotels\.json$/i,
+  /^hotels\.(json|xml)$/i,
   /^coupon_secret\.txt$/i,
-  /^cupones-.*\.(json|txt)$/i,
+]
+
+// Estado que GENERA el servidor y que jamás debe viajar en el deploy: subirlo machacaría
+// datos vivos (el registro de actividad del hotel, los cupones ya emitidos, el contador de
+// intentos de login). Se excluyen siempre, con o sin PBH_SIN_SECRETOS.
+const RUNTIME_PATTERNS = [
   /\.log$/i,
+  /^cupones-.*\.(json|txt)$/i,
+  /^login_attempts\.json$/i,
+  /^api_scheme\.txt$/i,
+  /^debug_log\.txt$/i,
 ]
 
 const SKIP_SECRETS = process.env.PBH_SIN_SECRETOS === '1'
@@ -29,15 +38,22 @@ function isSecret(fullPath) {
   return SECRET_PATTERNS.some((re) => re.test(path.basename(fullPath)))
 }
 
-async function listSecrets(dir, found = []) {
+function isRuntimeState(fullPath) {
+  return RUNTIME_PATTERNS.some((re) => re.test(path.basename(fullPath)))
+}
+
+async function listMatching(dir, match, found = []) {
   if (!(await fs.pathExists(dir))) return found
   for (const entry of await fs.readdir(dir)) {
     const full = path.join(dir, entry)
-    if ((await fs.stat(full)).isDirectory()) await listSecrets(full, found)
-    else if (isSecret(full)) found.push(path.relative(dist, full))
+    if ((await fs.stat(full)).isDirectory()) await listMatching(full, match, found)
+    else if (match(full)) found.push(path.relative(dist, full))
   }
   return found
 }
+
+const listSecrets = (dir) => listMatching(dir, isSecret)
+const listRuntimeState = (dir) => listMatching(dir, isRuntimeState)
 
 async function copyAssets() {
   await fs.ensureDir(dist)
@@ -46,10 +62,15 @@ async function copyAssets() {
 
   await fs.copy(path.join(root, 'config'), path.join(dist, 'config'), {
     overwrite: true,
-    filter: (src) => !SKIP_SECRETS || !isSecret(src),
+    filter: (src) => !isRuntimeState(src) && (!SKIP_SECRETS || !isSecret(src)),
   })
 
   const distConfig = path.join(dist, 'config')
+
+  // Barrido de estado que hubiera dejado un build anterior (antes sí se copiaba).
+  for (const rel of await listRuntimeState(distConfig)) {
+    await fs.remove(path.join(dist, rel))
+  }
 
   if (SKIP_SECRETS) {
     // Limpieza de secretos que hubiera dejado un build anterior

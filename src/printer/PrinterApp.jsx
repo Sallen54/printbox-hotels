@@ -5,6 +5,10 @@ import './Printer.css'
 
 const APP_VERSION = '1.0.6'
 
+// Misma contraseña que el Admin del Monitor: cambiar el evento de impresión es un ajuste
+// de Printbox. Sin esto, el Printer era una puerta trasera para saltarse ese candado.
+const ADVANCED_PASSWORD = 'HostyPrint2026@'
+
 // Ojo: aquí el backend está fijado a un dominio, no se resuelve como en shared/api.js.
 // El Printer corre en el PC de recepción y habla siempre con este despliegue.
 const BACKEND = "https://printbox.incomar.net"
@@ -35,6 +39,7 @@ export default function PrinterApp() {
   const [showEventModal, setShowEventModal] = useState(false)  // Modal para cambiar evento
   const [eventInput, setEventInput] = useState('')   // Input del código de evento
   const [eventError, setEventError] = useState('')   // Error en el código de evento
+  const [eventPass, setEventPass] = useState('')     // Contraseña de Printbox para cambiar el evento
   const eventInputRef = useRef(null)                 // Referencia para auto-focus
 
   // --- Estados de ejecución ---
@@ -128,6 +133,7 @@ export default function PrinterApp() {
   function handleStartClick() {
     setEventInput((config.evento_printer || config.evento)?.replace('ev-', '') || '')
     setEventError('')
+    setEventPass('')
     setShowEventModal(true)
   }
 
@@ -137,8 +143,13 @@ export default function PrinterApp() {
       setEventError('Introduce el número del evento')
       return
     }
+    if (eventPass !== ADVANCED_PASSWORD) {
+      setEventError('Contraseña de Printbox incorrecta')
+      return
+    }
     const fullCode = `ev-${code}`
     setEventError('')
+    setEventPass('')
     setShowEventModal(false)
 
     const newConfig = { ...config, evento_printer: fullCode }
@@ -412,8 +423,17 @@ export default function PrinterApp() {
                     onChange={e => setEventInput(e.target.value.replace(/\D/g, ''))}
                     onKeyDown={handleKeyDown}
                   />
-                  {eventError && <div className="invalid-feedback text-start">{eventError}</div>}
                 </div>
+
+                <input
+                  type="password"
+                  className="form-control bg-black border-secondary text-light event-modal-input"
+                  placeholder="Contraseña de Printbox"
+                  value={eventPass}
+                  onChange={e => { setEventPass(e.target.value); setEventError('') }}
+                  onKeyDown={handleKeyDown}
+                />
+                {eventError && <div className="text-danger mt-2" style={{ fontSize: 13 }}>{eventError}</div>}
               </div>
               <div className="modal-footer border-secondary justify-content-between">
                 <button className="btn btn-outline-secondary" onClick={() => setShowEventModal(false)}>
@@ -527,15 +547,13 @@ export default function PrinterApp() {
                 {editing && (
                   <div className="mt-4">
                     <p className="textos-section-title">Textos del Visor</p>
+                    <div className="config-helper-text mb-2">El precio por foto se cambia desde Admin en el Monitor (pide la contraseña de Printbox).</div>
                     <div className="row g-2">
                       {[
                         ['text_es', 'Español'],
                         ['text_en', 'English'],
                         ['text_fr', 'Français'],
                         ['text_de', 'Deutsch'],
-                        ['precio1', '1 foto (€)'],
-                        ['precio2', '2 fotos (€)'],
-                        ['precio3', '3 fotos (€)'],
                         ['empresa', 'Empresa']
                       ].map(([key, label]) => (
                         <div className="col-md-3" key={key}>

@@ -16,6 +16,25 @@ const defaultPrivacyContent = `
 const SQUARE_APP_ID = 'sq0idp-OV9y595m1kR_UU3QRest7Q'
 const SQUARE_LOCATION_ID = 'LHB32XGQK68GX'
 
+// Traba para el personal del hotel (que ya entró con su sesión), no un secreto: va en el bundle.
+const ADVANCED_PASSWORD = 'HostyPrint2026@'
+const PRECIO_FOTO_DEFAULT = '1.20'
+
+// Los QR van siempre a https (salvo en local): con http, Square no carga en el móvil.
+function mobileOrigin() {
+  const { origin, hostname } = window.location
+  if (hostname === 'localhost' || hostname === '127.0.0.1') return origin
+  return origin.replace(/^http:/, 'https:')
+}
+
+// Semáforo del código de habitación: comprobando / existe / no existe.
+function RoomCodeStatus({ status }) {
+  if (status === 'checking') return <span className="spinner-border spinner-border-sm text-secondary" title="Comprobando…" />
+  if (status === 'ok') return <i className="bi bi-check-circle-fill text-success" title="La habitación existe" />
+  if (status === 'bad') return <i className="bi bi-x-circle-fill text-danger" title="No existe ninguna habitación con este código" />
+  return <i className="bi bi-dash-circle text-secondary" title="Sin comprobar" />
+}
+
 function fixImageUrl(url) {
   if (!url) return ''
   if (url.includes('/proxy-image')) return url
@@ -56,9 +75,17 @@ export default function ViewerApp() {
   const [adminError, setAdminError] = useState('')
   const [adminEventCode, setAdminEventCode] = useState('')
   const [adminPrinterEventCode, setAdminPrinterEventCode] = useState('')
-  const [adminPrice1, setAdminPrice1] = useState('')
-  const [adminPrice2, setAdminPrice2] = useState('')
-  const [adminPrice3, setAdminPrice3] = useState('')
+  const [adminPrecioFoto, setAdminPrecioFoto] = useState('')
+  // Campos sensibles (evento de impresión y precio) tras contraseña fija de Printbox.
+  const [advancedUnlocked, setAdvancedUnlocked] = useState(false)
+  const [showUnlockModal, setShowUnlockModal] = useState(false)
+  const [unlockInput, setUnlockInput] = useState('')
+  const [unlockError, setUnlockError] = useState('')
+  // Confirmación escrita antes de cortar el servicio a todos los huéspedes.
+  const [showServiceConfirm, setShowServiceConfirm] = useState(false)
+  const [serviceConfirmInput, setServiceConfirmInput] = useState('')
+  // Validación en vivo de los códigos de habitación: { [codigo]: 'checking' | 'ok' | 'bad' }
+  const [roomCodeStatus, setRoomCodeStatus] = useState({})
   const [adminEmailRecepcion, setAdminEmailRecepcion] = useState('')
   const [adminServicioDisponible, setAdminServicioDisponible] = useState(true)
   const [adminHotelName, setAdminHotelName] = useState('')
@@ -111,7 +138,6 @@ export default function ViewerApp() {
   const [couponError, setCouponError] = useState('')
   const [couponLoading, setCouponLoading] = useState(false)
   const [appliedCoupon, setAppliedCoupon] = useState(null)
-  const [discountAmount, setDiscountAmount] = useState(0)
 
   // ── LOCALSTORAGE (solo caché de pintado; la fuente de verdad es el servidor por sesión) ──
   const saveViewerState = () => {
@@ -139,7 +165,7 @@ export default function ViewerApp() {
         servicio_disponible: cfg.servicio_disponible !== false,
       }
       const mergedTextos = {
-        precio1: '5', precio2: '9', precio3: '12', empresa: '',
+        precio1: PRECIO_FOTO_DEFAULT, precio2: '2.40', precio3: '3.60', empresa: '',
         ...(d.textos || {}),
       }
       setConfig(mergedConfig)
@@ -241,6 +267,27 @@ export default function ViewerApp() {
     .map(r => ({ nombre: r.nombre.trim(), codigo: r.codigo.trim() }))
     .filter(r => r.codigo)
 
+  // Comprueba contra Laravel que el código existe, para avisar al escribir y no al guardar.
+    const checkRoomCode = useCallback(async (codigo) => {
+    const code = String(codigo || '').trim()
+    if (!code) return
+    setRoomCodeStatus(prev => (prev[code] ? prev : { ...prev, [code]: 'checking' }))
+    try {
+      const id = await findEvent(`ev-${code}`)
+      setRoomCodeStatus(prev => ({ ...prev, [code]: id ? 'ok' : 'bad' }))
+    } catch {
+      setRoomCodeStatus(prev => ({ ...prev, [code]: 'bad' }))
+    }
+  }, [])
+
+  function handleUnlockAdvanced() {
+    if (unlockInput !== ADVANCED_PASSWORD) { setUnlockError('Contraseña incorrecta'); return }
+    setAdvancedUnlocked(true)
+    setShowUnlockModal(false)
+    setUnlockInput('')
+    setUnlockError('')
+  }
+
   // Primer código repetido entre habitaciones (o null): no pueden compartir código de evento.
   const duplicateRoomCode = (rooms) => {
     const seen = new Set()
@@ -271,9 +318,9 @@ export default function ViewerApp() {
         text_en: textos?.text_en || 'Get your room photo!',
         text_fr: textos?.text_fr || 'Obtenez votre photo!',
         text_de: textos?.text_de || 'Hol dir dein Foto!',
-        precio1: textos?.precio1 || '5',
-        precio2: textos?.precio2 || '9',
-        precio3: textos?.precio3 || '12',
+        precio1: textos?.precio1 || PRECIO_FOTO_DEFAULT,
+        precio2: textos?.precio2 || (parseFloat(PRECIO_FOTO_DEFAULT) * 2).toFixed(2),
+        precio3: textos?.precio3 || (parseFloat(PRECIO_FOTO_DEFAULT) * 3).toFixed(2),
         empresa: wizardName.trim() || 'Printbox Hotels',
         email_recepcion: textos?.email_recepcion || '',
       }
@@ -300,11 +347,11 @@ export default function ViewerApp() {
     setAdminLogoData(null)
     setAdminEventCode(config?.evento?.replace('ev-', '') || '')
     setAdminPrinterEventCode(config?.evento_printer?.replace('ev-', '') || '')
-    setAdminPrice1(textos?.precio1 || '5')
-    setAdminPrice2(textos?.precio2 || '9')
-    setAdminPrice3(textos?.precio3 || '12')
+    setAdminPrecioFoto(textos?.precio1 || PRECIO_FOTO_DEFAULT)
     setAdminEmailRecepcion(textos?.email_recepcion || '')
     setAdminServicioDisponible(config?.servicio_disponible !== false)
+    setAdvancedUnlocked(false)
+    setRoomCodeStatus({})
   }
 
   async function handleSaveAdminConfig() {
@@ -320,9 +367,14 @@ export default function ViewerApp() {
       text_en: textos?.text_en || 'Get your room photo!',
       text_fr: textos?.text_fr || 'Obtenez votre photo!',
       text_de: textos?.text_de || 'Hol dir dein Foto!',
-      precio1: adminPrice1?.trim() || textos?.precio1 || '5',
-      precio2: adminPrice2?.trim() || textos?.precio2 || '9',
-      precio3: adminPrice3?.trim() || textos?.precio3 || '12',
+      // Precio ÚNICO por foto. precio2/precio3 se guardan como múltiplos para que el
+      // fichero siga siendo válido y el recálculo del importe en el servidor (tabla
+      // [0,p1,p2,p3]) siga cuadrando sin tocar los dos backends.
+      ...(() => {
+        const p = parseFloat(String(adminPrecioFoto).replace(',', '.'))
+        const unit = Number.isFinite(p) && p >= 0 ? p : parseFloat(textos?.precio1) || parseFloat(PRECIO_FOTO_DEFAULT)
+        return { precio1: unit.toFixed(2), precio2: (unit * 2).toFixed(2), precio3: (unit * 3).toFixed(2) }
+      })(),
       empresa: adminHotelName.trim() || textos?.empresa || 'Printbox Hotels',
       email_recepcion: adminEmailRecepcion?.trim() || '',
     }
@@ -461,7 +513,7 @@ export default function ViewerApp() {
   }
 
   // ── IMPRESIÓN Y PAGO ──
-  function handleSelectPhoto(photo) { setSelectedPhoto(photo); setCopies(1); setPrintDone(false); setShowPayment(false); setAppliedCoupon(null); setDiscountAmount(0); setCouponCode(''); setCouponError('') }
+  function handleSelectPhoto(photo) { setSelectedPhoto(photo); setCopies(1); setPrintDone(false); setShowPayment(false); setAppliedCoupon(null); setCouponCode(''); setCouponError('') }
 
   const handleApplyCoupon = async () => {
     if (!couponCode.trim()) { setCouponError('Introduce un código'); return }
@@ -469,8 +521,7 @@ export default function ViewerApp() {
     try {
       const result = await validateCoupon(couponCode)
       setAppliedCoupon(result)
-      setDiscountAmount(result.amount)
-    } catch (e) { setCouponError(e.message); setAppliedCoupon(null); setDiscountAmount(0) }
+    } catch (e) { setCouponError(e.message); setAppliedCoupon(null) }
     finally { setCouponLoading(false) }
   }
 
@@ -646,14 +697,14 @@ export default function ViewerApp() {
                 {wizardStep === 3 && (
                   <>
                     <h6 className="text-warning mb-1"><i className="bi bi-door-open me-2" />Habitaciones del hotel</h6>
-                    <p className="text-secondary" style={{ fontSize: '13px' }}>Añade cada habitación con el código <b>ev-</b> que te hemos proporcionado. Podrás añadir o quitar habitaciones más adelante desde Admin.</p>
+                    <p className="text-secondary" style={{ fontSize: '13px' }}>Añade cada habitación con el código que te hemos proporcionado. Al salir del campo se comprueba que existe. Podrás añadir o quitar habitaciones más adelante desde Admin.</p>
                     <div style={{ maxHeight: '38vh', overflowY: 'auto' }}>
                       {wizardRooms.map((r, i) => (
                         <div key={i} className="d-flex gap-2 mb-2 align-items-center">
                           <input className="form-control bg-black border-secondary text-light" placeholder={`Habitación ${i + 1}`} value={r.nombre} onChange={e => wizardRoomsEditor.set(i, 'nombre', e.target.value)} style={{ maxWidth: '42%' }} />
                           <div className="input-group">
-                            <span className="input-group-text bg-black border-secondary text-warning fw-bold font-mono">ev-</span>
-                            <input className="form-control bg-black border-secondary text-light font-mono" inputMode="numeric" placeholder="000000" value={r.codigo} onChange={e => wizardRoomsEditor.set(i, 'codigo', e.target.value)} />
+                            <input className="form-control bg-black border-secondary text-light font-mono" inputMode="numeric" placeholder="000000" value={r.codigo} onChange={e => wizardRoomsEditor.set(i, 'codigo', e.target.value)} onBlur={() => checkRoomCode(r.codigo)} />
+                            <span className="input-group-text bg-black border-secondary"><RoomCodeStatus status={roomCodeStatus[r.codigo]} /></span>
                           </div>
                           <button className="btn btn-sm btn-outline-danger" onClick={() => wizardRoomsEditor.remove(i)} disabled={wizardRooms.length === 1} title="Quitar"><i className="bi bi-trash" /></button>
                         </div>
@@ -688,7 +739,7 @@ export default function ViewerApp() {
                   {habitaciones.map(h => (
                     <button key={h.codigo} className={`btn w-100 mb-2 d-flex justify-content-between align-items-center ${config?.evento === `ev-${h.codigo}` ? 'btn-warning text-dark fw-bold' : 'btn-outline-light'}`} onClick={() => handleSelectRoom(h.codigo)}>
                       <span><i className="bi bi-door-open me-2" />{h.nombre || 'Habitación'}</span>
-                      <span className="font-mono" style={{ fontSize: '12px' }}>ev-{h.codigo}</span>
+                      <span className="font-mono" style={{ fontSize: '12px' }}>{h.codigo}</span>
                     </button>
                   ))}
                 </div>
@@ -722,14 +773,14 @@ export default function ViewerApp() {
 
                   <div className="col-12">
                     <label className="form-label text-light mb-1">Habitaciones del hotel</label>
-                    <div className="form-text text-secondary mt-0 mb-2">Cada habitación con su código <b>ev-</b> proporcionado por Printbox. <i className="bi bi-qr-code" /> muestra el QR para imprimirlo y ponerlo en la habitación; <i className="bi bi-display" /> la elige como la que muestra este monitor.</div>
+                    <div className="form-text text-secondary mt-0 mb-2">Cada habitación con su código proporcionado por Printbox (se comprueba que existe al salir del campo). <i className="bi bi-qr-code" /> muestra el QR para imprimirlo y ponerlo en la habitación; <i className="bi bi-display" /> la elige como la que muestra este monitor.</div>
                     <div style={{ maxHeight: '30vh', overflowY: 'auto' }}>
                       {adminRooms.map((r, i) => (
                         <div key={i} className="d-flex gap-2 mb-2 align-items-center">
                           <input className="form-control form-control-sm bg-black border-secondary text-light" placeholder={`Habitación ${i + 1}`} value={r.nombre} onChange={e => adminRoomsEditor.set(i, 'nombre', e.target.value)} style={{ maxWidth: '34%' }} />
                           <div className="input-group input-group-sm" style={{ maxWidth: '38%' }}>
-                            <span className="input-group-text bg-black border-secondary text-warning fw-bold font-mono">ev-</span>
-                            <input className="form-control bg-black border-secondary text-light font-mono" inputMode="numeric" placeholder="000000" value={r.codigo} onChange={e => adminRoomsEditor.set(i, 'codigo', e.target.value)} />
+                            <input className="form-control bg-black border-secondary text-light font-mono" inputMode="numeric" placeholder="000000" value={r.codigo} onChange={e => adminRoomsEditor.set(i, 'codigo', e.target.value)} onBlur={() => checkRoomCode(r.codigo)} />
+                            <span className="input-group-text bg-black border-secondary"><RoomCodeStatus status={roomCodeStatus[r.codigo]} /></span>
                           </div>
                           <button className="btn btn-sm btn-outline-light" title="Ver QR de esta habitación" onClick={() => setQrRoom({ nombre: r.nombre, codigo: r.codigo })} disabled={!r.codigo}><i className="bi bi-qr-code" /></button>
                           <button className={`btn btn-sm ${adminEventCode === r.codigo && r.codigo ? 'btn-warning text-dark' : 'btn-outline-secondary'}`} title="Mostrar esta habitación en el monitor" onClick={() => r.codigo && setAdminEventCode(r.codigo)} disabled={!r.codigo}><i className="bi bi-display" /></button>
@@ -740,15 +791,38 @@ export default function ViewerApp() {
                     <button className="btn btn-sm btn-outline-warning" onClick={adminRoomsEditor.add}><i className="bi bi-plus-circle me-1" />Añadir habitación</button>
                   </div>
 
-                  <div className="col-md-6"><label className="form-label text-light">Evento de impresión (Impresora)</label><div className="input-group"><span className="input-group-text bg-black border-secondary text-warning fw-bold font-mono">ev-</span><input type="text" inputMode="numeric" className="form-control bg-black border-secondary text-light font-mono" value={adminPrinterEventCode} onChange={e => setAdminPrinterEventCode(e.target.value.replace(/\D/g, ''))} /></div><div className="form-text text-secondary">Opcional: si se rellena, las fotos pagadas se envían a este evento (el que vigila la app Printer) en vez de al de cada habitación.</div></div>
-                  <div className="col-md-2"><label className="form-label text-light">1 Foto (€)</label><input type="number" step="0.01" className="form-control bg-black border-secondary text-light" value={adminPrice1} onChange={e => setAdminPrice1(e.target.value)} /></div>
-                  <div className="col-md-2"><label className="form-label text-light">2 Fotos (€)</label><input type="number" step="0.01" className="form-control bg-black border-secondary text-light" value={adminPrice2} onChange={e => setAdminPrice2(e.target.value)} /></div>
-                  <div className="col-md-2"><label className="form-label text-light">3 Fotos (€)</label><input type="number" step="0.01" className="form-control bg-black border-secondary text-light" value={adminPrice3} onChange={e => setAdminPrice3(e.target.value)} /></div>
+                  <div className="col-12">
+                    <div className="bg-black border border-secondary rounded-3 p-3">
+                      <div className="d-flex align-items-center justify-content-between mb-2">
+                        <span className="text-light fw-bold"><i className={`bi ${advancedUnlocked ? 'bi-unlock-fill text-warning' : 'bi-lock-fill'} me-2`} />Ajustes de Printbox</span>
+                        {advancedUnlocked
+                          ? <span className="badge bg-warning text-dark">Desbloqueado</span>
+                          : <button className="btn btn-sm btn-outline-warning" onClick={() => { setUnlockInput(''); setUnlockError(''); setShowUnlockModal(true) }}><i className="bi bi-key me-1" />Desbloquear</button>}
+                      </div>
+                      <div className="row g-3">
+                        <div className="col-md-6">
+                          <label className="form-label text-light">Evento de impresión (Impresora)</label>
+                          <input type="text" inputMode="numeric" className="form-control bg-black border-secondary text-light font-mono" value={adminPrinterEventCode} disabled={!advancedUnlocked} onChange={e => setAdminPrinterEventCode(e.target.value.replace(/\D/g, ''))} />
+                        </div>
+                        <div className="col-md-6">
+                          <label className="form-label text-light">Precio por foto (€)</label>
+                          <input type="number" step="0.01" min="0" className="form-control bg-black border-secondary text-light" value={adminPrecioFoto} disabled={!advancedUnlocked} onChange={e => setAdminPrecioFoto(e.target.value)} />
+                          <div className="form-text text-secondary">Se cobra por cada copia: 2 copias = el doble, 3 copias = el triple.</div>
+                        </div>
+                      </div>
+                      {!advancedUnlocked && <div className="form-text text-secondary mt-2">Estos ajustes los cambia Printbox. Pulsa <b>Desbloquear</b> e introduce la contraseña.</div>}
+                    </div>
+                  </div>
                   <div className="col-md-12"><label className="form-label text-light">Email de Recepción</label><input type="email" placeholder="recepcion@tuhotel.com" className="form-control bg-black border-secondary text-light" value={adminEmailRecepcion} onChange={e => setAdminEmailRecepcion(e.target.value)} /><div className="form-text text-secondary">Vale para todo el hotel: a esta dirección se enviará un aviso con miniaturas y copias cada vez que cualquier habitación envíe fotos. Los precios también son únicos para todas las habitaciones.</div></div>
                   <div className="col-md-12">
                     <div className="bg-black border border-secondary rounded-3 p-3">
                       <div className="form-check form-switch">
-                        <input className="form-check-input" type="checkbox" role="switch" id="servicioDisponibleSwitch" checked={adminServicioDisponible} onChange={e => setAdminServicioDisponible(e.target.checked)} />
+                        <input className="form-check-input" type="checkbox" role="switch" id="servicioDisponibleSwitch" checked={adminServicioDisponible} onChange={e => {
+                          // Reactivar es inocuo; cortar el servicio afecta a todo el hotel y pide confirmación escrita.
+                          if (e.target.checked) { setAdminServicioDisponible(true); return }
+                          setServiceConfirmInput('')
+                          setShowServiceConfirm(true)
+                        }} />
                         <label className="form-check-label text-light fw-bold" htmlFor="servicioDisponibleSwitch">Servicio disponible para los huéspedes</label>
                       </div>
                       <div className="form-text text-secondary">Afecta a <strong>todo el hotel</strong>. Si se desactiva, cualquier huésped que escanee un QR verá el aviso de "servicio no disponible" en 4 idiomas en lugar de poder pedir fotos.</div>
@@ -772,6 +846,27 @@ export default function ViewerApp() {
             <div className="modal-content bg-dark border border-secondary">
               <div className="modal-header border-secondary"><h5 className="modal-title text-warning"><i className="bi bi-ticket-perforated me-2" />Cupones de Pago en Efectivo</h5><button type="button" className="btn-close btn-close-white" onClick={() => setShowCouponPanel(false)} /></div>
               <div className="modal-body p-4">
+                {/* Guía para recepción: quien usa esto no tiene por qué saber cómo funciona. */}
+                <div className="coupon-help mb-4">
+                  <div className="coupon-help-title"><i className="bi bi-info-circle me-2" />¿Para qué sirven los cupones?</div>
+                  <p className="coupon-help-text">
+                    Un cupón es un <b>código</b> que le das al huésped para que pague menos (o nada) en la app.
+                    Sirve para cobrar <b>en efectivo en recepción</b>, para invitaciones o para compensar una incidencia.
+                  </p>
+                  <div className="coupon-help-types">
+                    <div className="coupon-help-type">
+                      <span className="coupon-help-badge">Pago completo</span>
+                      <span>El huésped <b>no paga nada</b> en la app. Úsalo cuando ya te ha pagado en efectivo en recepción.</span>
+                    </div>
+                    <div className="coupon-help-type">
+                      <span className="coupon-help-badge">Descuento</span>
+                      <span>Le <b>resta</b> ese importe del total. Si el pedido son 3,60&nbsp;€ y el cupón es de 1,00&nbsp;€, pagará 2,60&nbsp;€ con tarjeta.</span>
+                    </div>
+                  </div>
+                  <p className="coupon-help-text mb-0"><b>Cómo se usa:</b> pon el importe, genera el código y dáselo al huésped (o pulsa <i className="bi bi-clipboard" /> para copiarlo). Él lo escribe en la casilla <i>Cupón</i> de su móvil y pulsa <b>Aplicar</b>.</p>
+                  <p className="coupon-help-warn mb-0"><i className="bi bi-exclamation-triangle-fill me-1" />Cada código vale <b>una sola vez</b>, caduca a las horas que indiques, y solo funciona en la <b>habitación que muestra ahora el monitor</b>. Si cambias de habitación, genera otro.</p>
+                </div>
+
                 <h6 className="text-light mb-3">Generar nuevo cupón</h6>
                 <div className="row g-2 mb-3">
                   <div className="col-md-4"><label className="form-label text-secondary" style={{ fontSize: '12px' }}>Importe (€)</label><input type="number" step="0.01" min="0.01" className="form-control bg-black border-secondary text-light" value={couponGenAmount} onChange={e => setCouponGenAmount(e.target.value)} /></div>
@@ -893,6 +988,60 @@ export default function ViewerApp() {
         </div>
       )}
 
+      {/* Desbloqueo de los ajustes de Printbox (evento de impresión y precio) */}
+      {showUnlockModal && (
+        <div className="modal d-block event-modal-overlay" style={{ zIndex: 1090 }} tabIndex="-1">
+          <div className="modal-dialog modal-dialog-centered modal-sm">
+            <div className="modal-content bg-dark border border-secondary event-modal">
+              <div className="modal-body p-4 text-center">
+                <i className="bi bi-key-fill text-warning" style={{ fontSize: 32 }} />
+                <h5 className="text-light mt-2 mb-1">Ajustes de Printbox</h5>
+                <p className="text-secondary mb-3" style={{ fontSize: 13 }}>Introduce la contraseña para cambiar el evento de impresión y el precio.</p>
+                <input type="password" autoFocus className={`form-control bg-black border-secondary text-light ${unlockError ? 'is-invalid' : ''}`} value={unlockInput}
+                  onChange={e => { setUnlockInput(e.target.value); setUnlockError('') }}
+                  onKeyDown={e => { if (e.key === 'Enter') handleUnlockAdvanced(); if (e.key === 'Escape') setShowUnlockModal(false) }} />
+                {unlockError && <div className="text-danger mt-2" style={{ fontSize: 13 }}>{unlockError}</div>}
+              </div>
+              <div className="modal-footer border-secondary justify-content-between">
+                <button className="btn btn-secondary" onClick={() => setShowUnlockModal(false)}>Cancelar</button>
+                <button className="btn btn-warning text-dark fw-bold" onClick={handleUnlockAdvanced}>Desbloquear</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Confirmación escrita para cortar el servicio a todos los huéspedes */}
+      {showServiceConfirm && (
+        <div className="modal d-block event-modal-overlay" style={{ zIndex: 1090 }} tabIndex="-1">
+          <div className="modal-dialog modal-dialog-centered">
+            <div className="modal-content bg-dark border border-danger event-modal">
+              <div className="modal-body p-4 text-center">
+                <i className="bi bi-exclamation-triangle-fill text-danger" style={{ fontSize: 40 }} />
+                <h5 className="text-light mt-2 mb-2">¿Desactivar el servicio?</h5>
+                <div className="alert alert-danger py-2" style={{ fontSize: 14 }}>
+                  <strong>EL SERVICIO SE DETENDRÁ PARA TODOS LOS HUÉSPEDES.</strong>
+                </div>
+                <p className="text-secondary mb-3" style={{ fontSize: 13 }}>
+                  Cualquier huésped que escanee un QR verá el aviso de "servicio no disponible" y no podrá pedir fotos.
+                  Escribe <b className="text-light">Confirmo</b> para continuar.
+                </p>
+                <input autoFocus className="form-control bg-black border-secondary text-light text-center" placeholder="Confirmo" value={serviceConfirmInput}
+                  onChange={e => setServiceConfirmInput(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Escape') setShowServiceConfirm(false) }} />
+              </div>
+              <div className="modal-footer border-secondary justify-content-between">
+                <button className="btn btn-secondary" onClick={() => setShowServiceConfirm(false)}>Cancelar</button>
+                <button className="btn btn-danger fw-bold" disabled={serviceConfirmInput.trim().toLowerCase() !== 'confirmo'}
+                  onClick={() => { setAdminServicioDisponible(false); setShowServiceConfirm(false) }}>
+                  <i className="bi bi-power me-1" />Desactivar servicio
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Header y galería */}
       <header className="viewer-header">
         <div className="viewer-header-top">
@@ -934,9 +1083,9 @@ export default function ViewerApp() {
             <div className="modal-content bg-dark border border-secondary event-modal">
               <div className="modal-body text-center p-5">
                 <h5 className="event-modal-title mb-1">{qrRoom.nombre || 'Habitación'}</h5>
-                <p className="text-secondary font-mono mb-4" style={{ fontSize: '12px' }}>ev-{qrRoom.codigo}</p>
+                <p className="text-secondary font-mono mb-4" style={{ fontSize: '12px' }}>{qrRoom.codigo}</p>
                 <div style={{ display: 'flex', justifyContent: 'center', backgroundColor: 'white', padding: '15px', borderRadius: '8px' }}>
-                  <QRCodeSVG value={`${window.location.origin}/mobile?hotel=${encodeURIComponent(session?.hotelId || '')}&habitacion=${qrRoom.codigo}`} size={300} level="H" includeMargin={true} />
+                  <QRCodeSVG value={`${mobileOrigin()}/mobile?hotel=${encodeURIComponent(session?.hotelId || '')}&habitacion=${qrRoom.codigo}`} size={300} level="H" includeMargin={true} />
                 </div>
                 <p className="text-warning mt-3 mb-0"><small>Imprime este código y colócalo en la habitación — al escanearlo, el huésped sube sus fotos</small></p>
                 <button className="btn btn-secondary mt-3" onClick={() => setQrRoom(null)}><i className="bi bi-x me-1" /> Cerrar</button>
@@ -975,9 +1124,7 @@ export default function ViewerApp() {
       )}
       <footer className="viewer-footer">
         <div className="viewer-footer-content">
-          {textos?.precio1 && <span className="price-badge">1 FOTO <span className="badge">{textos.precio1}€</span></span>}
-          {textos?.precio2 && <span className="price-badge">2 FOTOS <span className="badge">{textos.precio2}€</span></span>}
-          {textos?.precio3 && <span className="price-badge">3 FOTOS <span className="badge">{textos.precio3}€</span></span>}
+          {textos?.precio1 && <span className="price-badge">PRECIO POR FOTO <span className="badge">{textos.precio1}€</span></span>}
           {textos?.empresa && <span className="company-name">{textos.empresa}</span>}
           <span className="print-count">IMPRESAS HOY <span className="print-count-number">{printCount}</span></span>
         </div>

@@ -3,6 +3,19 @@ RewriteEngine On
 
 RewriteBase /
 
+# Forzar HTTPS: el SDK de pago de Square exige "secure context" y por http se niega a
+# cargar ("Web Payments SDK can only be embedded on sites that use HTTPS").
+#
+# Se comprueban CUATRO señales porque en hosting con proxy TLS (IONOS) la petición puede
+# llegar al Apache como http aunque el visitante venga por https. Si solo se mirara
+# %{HTTPS} el redirect se dispararía en bucle infinito y tumbaría el sitio entero.
+# Si tras desplegar vieras "demasiadas redirecciones", comenta este bloque y avisa.
+RewriteCond %{HTTPS} !=on
+RewriteCond %{SERVER_PORT} !=443
+RewriteCond %{HTTP:X-Forwarded-Proto} !=https
+RewriteCond %{HTTP:X-Forwarded-SSL} !=on
+RewriteRule ^ https://%{HTTP_HOST}%{REQUEST_URI} [R=301,L]
+
 # Bloquear acceso público directo a logs, cookies de sesión y archivos de config.
 # Estos archivos los lee/escribe proxy.php internamente (filesystem), nunca deben
 # servirse por HTTP: pba_cookies.txt es la sesión Sanctum contra Laravel, y los .log

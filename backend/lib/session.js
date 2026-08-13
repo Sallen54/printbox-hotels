@@ -60,8 +60,27 @@ function getSessionHotelId(req, baseConfigDir) {
   return verifyToken(parseCookies(req)[COOKIE_NAME], baseConfigDir)
 }
 
+// Cuentas de los hoteles: config/hotels.xml (formato oficial) con respaldo en hotels.json
+// para despliegues sin migrar. Misma lógica que readHotelsAccounts() de proxy.php.
+// El XML lo escribe siempre scripts/add-hotel.js, así que se parsea con regex en vez de
+// añadir una dependencia de XML solo para esto.
 function readHotels(baseConfigDir) {
   try {
+    const xmlFile = path.join(baseConfigDir, 'hotels.xml')
+    if (fs.existsSync(xmlFile)) {
+      const xml = fs.readFileSync(xmlFile, 'utf8')
+      const hotels = {}
+      const tag = (block, name) => {
+        const m = block.match(new RegExp(`<${name}>([\\s\\S]*?)</${name}>`))
+        return m ? m[1].trim() : ''
+      }
+      for (const m of xml.matchAll(/<hotel\s+id="([^"]+)"\s*>([\s\S]*?)<\/hotel>/g)) {
+        const id = m[1].trim()
+        if (!id) continue
+        hotels[id] = { nombre: tag(m[2], 'nombre'), user: tag(m[2], 'usuario'), passHash: tag(m[2], 'passHash') }
+      }
+      return hotels
+    }
     const f = path.join(baseConfigDir, 'hotels.json')
     return fs.existsSync(f) ? JSON.parse(fs.readFileSync(f, 'utf8')) : {}
   } catch { return {} }

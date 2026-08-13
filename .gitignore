@@ -14,6 +14,7 @@ AUDITORIA_*.md
 # suben por FTP; nunca al repo): cuentas con hash bcrypt, secreto de sesión HMAC y
 # la config/logos de cada hotel.
 config/hotels.json
+config/hotels.xml
 config/session_secret.txt
 config/hotels/
 config/coupon_secret.txt

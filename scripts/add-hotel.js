@@ -3,8 +3,9 @@
  * add-hotel.js — Alta/actualización de cuentas de hotel (uso interno de Printbox).
  *
  * No hay auto-registro: Printbox crea cada cuenta con este script. Escribe en
- * config/hotels.json (índice de cuentas con hash bcrypt) y crea la carpeta
- * config/hotels/<hotelId>/ con ficheros de config por defecto.
+ * config/hotels.xml (índice de cuentas con hash bcrypt) y crea la carpeta
+ * config/hotels/<hotelId>/ con ficheros de config por defecto. Si todavía existe el
+ * hotels.json antiguo se lee de ahí y la primera escritura ya deja el XML migrado.
  *
  * Los hashes bcrypt de bcryptjs ($2b$) los verifica tanto backend/routes/auth.js
  * como password_verify() de PHP en proxy.php — misma cuenta vale en dev y prod.
@@ -22,7 +23,8 @@ const path = require('path')
 const bcrypt = require('bcryptjs')
 
 const CONFIG_DIR = path.join(process.cwd(), 'config')
-const HOTELS_JSON = path.join(CONFIG_DIR, 'hotels.json')
+const HOTELS_XML = path.join(CONFIG_DIR, 'hotels.xml')
+const HOTELS_JSON = path.join(CONFIG_DIR, 'hotels.json') // formato antiguo, solo lectura
 const HOTELS_DIR = path.join(CONFIG_DIR, 'hotels')
 
 // Ficheros de config que son por-hotel (los que hoy viven en config/ global)
@@ -43,9 +45,9 @@ const DEFAULT_TEXTOS = [
   'en:Get your room photo!',
   'fr:Obtenez votre photo!',
   'de:Hol dir dein Foto!',
-  'precio1:5',
-  'precio2:9',
-  'precio3:12',
+  'precio1:1.20',
+  'precio2:2.40',
+  'precio3:3.60',
   'empresa:',
   'email_recepcion:',
 ].join('\n')
@@ -64,14 +66,46 @@ function parseArgs(argv) {
   return args
 }
 
+const xmlEscape = (s) => String(s ?? '')
+  .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+  .replace(/"/g, '&quot;').replace(/'/g, '&apos;')
+
+const xmlUnescape = (s) => String(s ?? '')
+  .replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+  .replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&amp;/g, '&')
+
+// Lee config/hotels.xml; si aún no existe, cae al hotels.json antiguo (la primera
+// escritura ya deja el XML, migrando las cuentas sin intervención).
 function readHotels() {
-  try { return fs.existsSync(HOTELS_JSON) ? JSON.parse(fs.readFileSync(HOTELS_JSON, 'utf8')) : {} }
-  catch { return {} }
+  try {
+    if (fs.existsSync(HOTELS_XML)) {
+      const xml = fs.readFileSync(HOTELS_XML, 'utf8')
+      const hotels = {}
+      const tag = (block, name) => {
+        const m = block.match(new RegExp(`<${name}>([\\s\\S]*?)</${name}>`))
+        return m ? xmlUnescape(m[1].trim()) : ''
+      }
+      for (const m of xml.matchAll(/<hotel\s+id="([^"]+)"\s*>([\s\S]*?)<\/hotel>/g)) {
+        hotels[xmlUnescape(m[1].trim())] = {
+          nombre: tag(m[2], 'nombre'), user: tag(m[2], 'usuario'), passHash: tag(m[2], 'passHash'),
+        }
+      }
+      return hotels
+    }
+    return fs.existsSync(HOTELS_JSON) ? JSON.parse(fs.readFileSync(HOTELS_JSON, 'utf8')) : {}
+  } catch { return {} }
 }
 
 function writeHotels(hotels) {
   fs.ensureDirSync(CONFIG_DIR)
-  fs.writeFileSync(HOTELS_JSON, JSON.stringify(hotels, null, 2))
+  const cuerpo = Object.entries(hotels).map(([id, h]) => [
+    `  <hotel id="${xmlEscape(id)}">`,
+    `    <nombre>${xmlEscape(h.nombre)}</nombre>`,
+    `    <usuario>${xmlEscape(h.user)}</usuario>`,
+    `    <passHash>${xmlEscape(h.passHash)}</passHash>`,
+    '  </hotel>',
+  ].join('\n')).join('\n')
+  fs.writeFileSync(HOTELS_XML, `<?xml version="1.0" encoding="UTF-8"?>\n<hoteles>\n${cuerpo}\n</hoteles>\n`)
 }
 
 function sanitizeId(id) {

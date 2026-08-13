@@ -192,7 +192,31 @@ function getSessionHotelId($base) {
     return pbhVerifyToken($_COOKIE[PBH_COOKIE] ?? '', $base);
 }
 
+// Cuentas de los hoteles. Formato oficial: config/hotels.xml (un solo fichero con todos).
+// Se mantiene la lectura de hotels.json para no romper despliegues que aún no han migrado.
+//   <hoteles><hotel id="vf"><nombre>..</nombre><usuario>..</usuario><passHash>..</passHash></hotel></hoteles>
+// Devuelve [ hotelId => ['nombre'=>, 'user'=>, 'passHash'=>] ].
 function readHotelsAccounts($base) {
+    $xmlFile = $base . '/hotels.xml';
+    if (is_file($xmlFile)) {
+        $prev = libxml_use_internal_errors(true);
+        $xml = simplexml_load_file($xmlFile);
+        libxml_clear_errors();
+        libxml_use_internal_errors($prev);
+        if ($xml !== false) {
+            $accounts = [];
+            foreach ($xml->hotel as $h) {
+                $id = trim((string) $h['id']);
+                if ($id === '') continue;
+                $accounts[$id] = [
+                    'nombre'   => trim((string) $h->nombre),
+                    'user'     => trim((string) $h->usuario),
+                    'passHash' => trim((string) $h->passHash),
+                ];
+            }
+            return $accounts;
+        }
+    }
     $f = $base . '/hotels.json';
     if (!is_file($f)) return [];
     $parsed = json_decode(@file_get_contents($f), true);
@@ -243,6 +267,24 @@ function getHotelReceptionEmail($configDir) {
         }
     }
     return '';
+}
+
+// Registro de actividad del hotel en config/hotels/<id>/actividad.log (TSV: fecha, IP,
+// acción, detalle). No se sirve por HTTP: lo tapa config/.htaccess.
+function pbhLogActividad($configDir, $accion, $detalle = '') {
+    if (!$configDir || !is_dir($configDir)) return;
+    $file = $configDir . '/actividad.log';
+    // Rotación simple: pasado 1 MB se conserva solo la mitad final.
+    if (@filesize($file) > 1048576) {
+        $keep = @file_get_contents($file, false, null, 524288);
+        if ($keep !== false) @file_put_contents($file, $keep, LOCK_EX);
+    }
+    $clean = function ($s) { return str_replace(["\r", "\n", "\t"], ' ', (string) $s); };
+    $linea = date('Y-m-d H:i:s') . "\t"
+        . ($_SERVER['REMOTE_ADDR'] ?? '-') . "\t"
+        . $clean($accion) . "\t"
+        . $clean($detalle) . "\n";
+    @file_put_contents($file, $linea, FILE_APPEND | LOCK_EX);
 }
 
 // Habitaciones registradas del hotel: [{ nombre, codigo }] en config/habitaciones.json.
@@ -493,7 +535,7 @@ function pbhClearLoginFailures($base, $user) {
 // cobro de 1 céntimo. Así el arreglo no rompe a nadie con la app cacheada.
 
 function pbhReadPrices($configDir) {
-    $prices = ['precio1' => 5.0, 'precio2' => 9.0, 'precio3' => 12.0];
+    $prices = ['precio1' => 1.20, 'precio2' => 2.40, 'precio3' => 3.60];
     $file = $configDir . '/textos.txt';
     if (file_exists($file)) {
         $lines = file($file, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
@@ -882,6 +924,16 @@ if ($uri === '/config' && $_SERVER['REQUEST_METHOD'] === 'POST') {
         if ($ok === false) $writeErrors[] = 'No se pudo escribir habitaciones.json';
     }
 
+    // Estado previo, para registrar en actividad.log solo lo que cambia de verdad.
+    $prevPrices = pbhReadPrices($configDir);
+    $prevApi = @file_get_contents($configDir . '/servidor_api.txt');
+    $prevPrinter = '';
+    if ($prevApi !== false) {
+        foreach (explode("\n", $prevApi) as $l) {
+            if (strpos($l, 'evento_printer;') === 0) { $prevPrinter = trim(substr($l, strlen('evento_printer;'))); break; }
+        }
+    }
+
     if (isset($data['config'])) {
         $c = $data['config'];
         $success = file_put_contents($configDir . '/servidor_api.txt', implode("\n", [
@@ -903,9 +955,9 @@ if ($uri === '/config' && $_SERVER['REQUEST_METHOD'] === 'POST') {
             'text_en' => $t['text_en'] ?? 'Get your room photo!',
             'text_fr' => $t['text_fr'] ?? 'Obtenez votre photo!',
             'text_de' => $t['text_de'] ?? 'Hol dir dein Foto!',
-            'precio1' => $t['precio1'] ?? '5',
-            'precio2' => $t['precio2'] ?? '9',
-            'precio3' => $t['precio3'] ?? '12',
+            'precio1' => $t['precio1'] ?? '1.20',
+            'precio2' => $t['precio2'] ?? '2.40',
+            'precio3' => $t['precio3'] ?? '3.60',
             'empresa' => $t['empresa'] ?? 'Printbox Hotels',
             'email_recepcion' => $t['email_recepcion'] ?? '',
         ];
@@ -925,6 +977,23 @@ if ($uri === '/config' && $_SERVER['REQUEST_METHOD'] === 'POST') {
         // textos.txt del hotel (precios/textos/empresa/email son por-hotel)
         $success = file_put_contents($configDir . '/textos.txt', $content, LOCK_EX);
         if ($success === false) $writeErrors[] = 'No se pudo escribir textos.txt';
+    }
+
+    // Registro de los cambios importantes (solo si el valor cambió).
+    if (isset($data['textos'])) {
+        clearstatcache(true, $configDir . '/textos.txt');
+        $newPrices = pbhReadPrices($configDir);
+        if ((float) $newPrices['precio1'] !== (float) $prevPrices['precio1']) {
+            pbhLogActividad($configDir, 'PRECIO_CAMBIADO',
+                sprintf('por foto: %.2f€ → %.2f€', $prevPrices['precio1'], $newPrices['precio1']));
+        }
+    }
+    if (isset($data['config'])) {
+        $newPrinter = trim((string) ($data['config']['evento_printer'] ?? ''));
+        if ($newPrinter !== $prevPrinter) {
+            pbhLogActividad($configDir, 'EVENTO_IMPRESION_CAMBIADO',
+                ($prevPrinter ?: '(vacío)') . ' → ' . ($newPrinter ?: '(vacío)'));
+        }
     }
 
     if (count($writeErrors) > 0) {
@@ -1082,6 +1151,15 @@ if (strpos($uri, '/printbox/') === 0) {
         // El hotel llega en ?hotel= (lo añade el móvil desde el QR); el email de
         // recepción se lee del textos.txt de ESE hotel.
         $configDir = getReadConfigDir();
+
+        // Un pedido completo = fotos enviadas a imprimir. Se registra aunque no haya email.
+        $copias = 0;
+        foreach ((array) $items as $it) { $copias += max(1, (int) ($it['copies'] ?? 1)); }
+        pbhLogActividad($configDir, 'ENVIADO_A_IMPRIMIR', sprintf(
+            'habitación %s · %d foto(s) · %d copia(s) · %s€ · %s',
+            $room !== '' ? $room : '?', count((array) $items), $copias, $total, $paymentMethod ?: '-'
+        ));
+
         $emailTo = getHotelReceptionEmail($configDir);
 
         if (!$emailTo) {
@@ -1409,6 +1487,22 @@ function hotelOwnsRoom($base, $hotelId, $evento) {
     return false;
 }
 
+// Carpeta del hotel dueño de una habitación. El canje de cupón lo hace el huésped sin
+// sesión, así que es la única forma de saber en qué actividad.log anotarlo.
+function pbhFindHotelDirByRoom($base, $evento) {
+    $hotelsDir = $base . '/hotels';
+    if ($evento === '' || !is_dir($hotelsDir)) return '';
+    foreach ((array) @scandir($hotelsDir) as $id) {
+        if ($id === '.' || $id === '..') continue;
+        $dir = $hotelsDir . '/' . $id;
+        if (!is_dir($dir)) continue;
+        foreach (readHabitaciones($dir) as $h) {
+            if (($h['codigo'] ?? '') === $evento) return $dir;
+        }
+    }
+    return '';
+}
+
 /**
  * Devuelve la ruta del archivo JSON de cupones para un evento.
  * Formato: /config/cupones-{evento}.json
@@ -1565,6 +1659,10 @@ if ($uri === '/coupon/create' && $_SERVER['REQUEST_METHOD'] === 'POST') {
     });
 
     logCouponUsage($evento, $code, $amount, 'CREATE');
+    pbhLogActividad(resolveHotelDir($base, $sessionHotelId), 'CUPON_CREADO', sprintf(
+        '%s · habitación %s · %s · %.2f€ · caduca en %dh',
+        $code, $evento, $type === 'full' ? 'pago completo' : 'descuento', $amount / 100, $expiresIn
+    ));
 
     echo json_encode([
         'ok'     => true,
@@ -1681,6 +1779,13 @@ if ($uri === '/coupon/redeem' && $_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 
     logCouponUsage($evento, $code, $result['amount'], 'REDEEM');
+    $hotelDir = pbhFindHotelDirByRoom(getConfigDir(), $evento);
+    if ($hotelDir) {
+        pbhLogActividad($hotelDir, 'CUPON_USADO', sprintf(
+            '%s · habitación %s · %.2f€ · pedido %s',
+            $code, $evento, $result['amount'] / 100, $orderId !== '' ? $orderId : '-'
+        ));
+    }
 
     echo json_encode([
         'ok'     => true,
