@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react'
 import { QRCodeSVG } from 'qrcode.react'
-import { findEvent, getEventPhotos, printJob, saveConfig, getConfig, getPrintCount, sendPhoto, processPayment, hotelLogoUrl, uploadHotelLogo, saveHabitaciones, login, logout, getMe } from '../shared/api'
+import { findEvent, getEventPhotos, saveConfig, getConfig, hotelLogoUrl, uploadHotelLogo, saveHabitaciones, login, logout, getMe } from '../shared/api'
 import { useInterval } from '../shared/hooks/useInterval'
 import './Viewer.css'
 
@@ -12,9 +12,6 @@ const defaultPrivacyContent = `
 <div style="text-align:center;"><h4><b> Condiciones y políticas de uso </b></h4><br></div>
 <div style="text-align:justify;"><p> La Aplicación Printbox Hotels está desarrollada, diseñada y publicada por Jorge Marí Grimalt y domicilio C/Patricio Ferrandiz 3 Bjo C Incomar en Dénia, Alicante. Las condiciones de servicio y uso (las "Condiciones de Uso") rigen el acceso a la aplicación móvil Printbox Hotels así como el uso del Sitio y de los servicios que usted (el "Usuario") realice. </p><p> Para consultar nuestras políticas de privacidad, acceda en el siguiente enlace: </p></div>
 `
-
-const SQUARE_APP_ID = 'sq0idp-OV9y595m1kR_UU3QRest7Q'
-const SQUARE_LOCATION_ID = 'LHB32XGQK68GX'
 
 // Traba para el personal del hotel (que ya entró con su sesión), no un secreto: va en el bundle.
 const ADVANCED_PASSWORD = 'HostyPrint2026@'
@@ -55,9 +52,7 @@ export default function ViewerApp() {
   const [allPhotos, setAllPhotos] = useState([])
   const [currentPage, setCurrentPage] = useState(1)
   const [lastPage, setLastPage] = useState(1)
-  const [printCount, setPrintCount] = useState(0)
   const [error, setError] = useState(null)
-  const [autoplay, setAutoplay] = useState(false)
   const [loading, setLoading] = useState(false)
 
   // Sesión de hotel: undefined = comprobando, null = mostrar login, { hotelId, nombre } = dentro
@@ -123,26 +118,14 @@ export default function ViewerApp() {
   const [couponList, setCouponList] = useState([])
   const [couponListLoading, setCouponListLoading] = useState(false)
 
-  // Pago y cupón en el modal de impresión
+  // Foto ampliada. El Monitor es SOLO VISOR: recepción mira lo que suben los huéspedes,
+  // no cobra ni manda a imprimir (el pedido ya se pagó e imprimió desde el móvil).
   const [selectedPhoto, setSelectedPhoto] = useState(null)
-  const [copies, setCopies] = useState(1)
-  const [printing, setPrinting] = useState(false)
-  const [printDone, setPrintDone] = useState(false)
-  const [showPayment, setShowPayment] = useState(false)
-  const [paymentMethod, setPaymentMethod] = useState('')
-  const [squareCard, setSquareCard] = useState(null)
-  const [squareError, setSquareError] = useState('')
-  const [squareLoading, setSquareLoading] = useState(false)
-  // Cupón (descuento/pago completo)
-  const [couponCode, setCouponCode] = useState('')
-  const [couponError, setCouponError] = useState('')
-  const [couponLoading, setCouponLoading] = useState(false)
-  const [appliedCoupon, setAppliedCoupon] = useState(null)
 
   // ── LOCALSTORAGE (solo caché de pintado; la fuente de verdad es el servidor por sesión) ──
   const saveViewerState = () => {
     try {
-      const data = { config, textos, currentPage, lastPage, printCount }
+      const data = { config, textos, currentPage, lastPage }
       localStorage.setItem('printbox_viewer_state', JSON.stringify(data))
     } catch (e) { console.error(e) }
   }
@@ -150,10 +133,7 @@ export default function ViewerApp() {
   // ── INICIALIZACIÓN (tras autenticar) — toda la config viene del hotel de la sesión ──
   const init = useCallback(async () => {
     try {
-      const [d, count] = await Promise.all([
-        getConfig(),                 // hotel resuelto por la cookie de sesión
-        getPrintCount().catch(() => 0),
-      ])
+      const d = await getConfig() // hotel resuelto por la cookie de sesión
       const cfg = d.config || {}
       const mergedConfig = {
         servidor: cfg.servidor || 'http://gestion.printboxweb.com',
@@ -171,7 +151,6 @@ export default function ViewerApp() {
       setConfig(mergedConfig)
       setTextos(mergedTextos)
       setHabitaciones(d.habitaciones || [])
-      setPrintCount(count || 0)
       setError(null)
       if (!mergedConfig.evento) {
         if ((d.habitaciones || []).length) {
@@ -216,7 +195,7 @@ export default function ViewerApp() {
   }
 
   useEffect(() => { fetch('/assets/terms_and_conditions_2.html').then(r=>r.text()).then(setPrivacyContent).catch(()=>setPrivacyContent(defaultPrivacyContent)) }, [])
-  useEffect(() => { if (session) saveViewerState() }, [config, textos, currentPage, lastPage, printCount, session])
+  useEffect(() => { if (session) saveViewerState() }, [config, textos, currentPage, lastPage, session])
 
   // ── EVENTO Y ADMIN ──
   // Cambiar la habitación que muestra el Monitor (de entre las registradas)
@@ -445,9 +424,6 @@ export default function ViewerApp() {
 
   useEffect(() => { loadAllPhotos(currentPage).catch(e => setError(`Error al cargar fotos: ${e?.message || e}`)) }, [loadAllPhotos, currentPage])
 
-  // Autoplay
-  useInterval(() => { if (autoplay) setCurrentPage(p => (p < lastPage ? p + 1 : 1)) }, autoplay ? 15000 : null)
-
   // Auto-refresco cada 20s para que aparezcan las fotos nuevas de los huéspedes. Se pausa si
   // hay un modal abierto para no interrumpir al recepcionista.
   useInterval(() => {
@@ -456,138 +432,10 @@ export default function ViewerApp() {
     }
   }, uuid ? 20000 : null)
 
-  // ── HELPERS DE PRECIO ──
-  function getPrecio(n) {
-    if (!textos) return null
-    if (n === 1) return textos.precio1
-    if (n === 2) return textos.precio2
-    if (n >= 3) return textos.precio3
-  }
-  const totalPrice = () => {
-    const p = parseFloat(getPrecio(copies) || 0)
-    return isNaN(p) ? '0' : p.toFixed(2)
-  }
-  // Un cupón 'discount' resta su importe; uno 'full' cubre el pedido entero cuando su
-  // importe alcanza el total (si no, cubre lo que puede y el resto se paga con tarjeta).
-  const couponDiscountCents = (total) => {
-    if (!appliedCoupon) return 0
-    if (appliedCoupon.type === 'full') return Math.min(appliedCoupon.amount, total)
-    return appliedCoupon.type === 'discount' ? appliedCoupon.amount : 0
-  }
-
-  const totalCents = Math.round(parseFloat(totalPrice()) * 100)
-  const discountCents = couponDiscountCents(totalCents)
-  const finalCents = Math.max(0, totalCents - discountCents)
-  const finalPrice = (finalCents / 100).toFixed(2)
-
-  // Desglose que se manda con el pago para que el servidor recalcule el importe.
-  const orderPayload = () => ({
-    hotel: session?.hotelId || '',
-    evento: (config?.evento || '').replace('ev-', ''),
-    copies: [copies],
-    coupon: appliedCoupon ? couponCode.trim().toUpperCase() : undefined,
-  })
-
-  // ── CUPONES (proxy.php) ──
-  const validateCoupon = async (code) => {
-    const evento = (config?.evento || '').replace('ev-', '')
-    const res = await fetch('/coupon/validate', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ code: code.trim().toUpperCase(), evento }),
-    })
-    const json = await res.json()
-    if (!res.ok || !json.valid) throw new Error(json.error || 'Cupón inválido')
-    return json
-  }
-  const redeemCoupon = async (code, orderId) => {
-    const evento = (config?.evento || '').replace('ev-', '')
-    const res = await fetch('/coupon/redeem', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ code: code.trim().toUpperCase(), evento, order_id: orderId }),
-    })
-    const json = await res.json()
-    if (!res.ok || !json.ok) throw new Error(json.error || 'No se pudo canjear el cupón')
-    return json
-  }
-
-  // ── IMPRESIÓN Y PAGO ──
-  function handleSelectPhoto(photo) { setSelectedPhoto(photo); setCopies(1); setPrintDone(false); setShowPayment(false); setAppliedCoupon(null); setCouponCode(''); setCouponError('') }
-
-  const handleApplyCoupon = async () => {
-    if (!couponCode.trim()) { setCouponError('Introduce un código'); return }
-    setCouponLoading(true); setCouponError('')
-    try {
-      const result = await validateCoupon(couponCode)
-      setAppliedCoupon(result)
-    } catch (e) { setCouponError(e.message); setAppliedCoupon(null) }
-    finally { setCouponLoading(false) }
-  }
-
-  const handlePayment = async () => {
-    if (!selectedPhoto || printing || !paymentMethod) return
-    if (paymentMethod === 'square' && !squareCard) { setSquareError('Square no inicializado'); return }
-
-    // Validar cupón tipo full
-    if (appliedCoupon?.type === 'full' && finalCents > 0) {
-      setCouponError('El cupón de pago completo no cubre el total')
-      return
-    }
-
-    setPrinting(true)
-    try {
-      // 1. Procesar pago si hay saldo restante
-      if (finalCents > 0) {
-        if (paymentMethod === 'square') {
-          setSquareLoading(true)
-          const result = await squareCard.tokenize()
-          if (result.status !== 'OK') throw new Error(result.errors?.[0]?.message || 'Tokenización fallida')
-          await processPayment({ token: result.token, amount: String(finalCents), currency: 'EUR', order: orderPayload() })
-          setSquareLoading(false)
-        } else if (paymentMethod === 'paypal') {
-          // PayPal NO está integrado en el Monitor (sí en el móvil, con los botones del
-          // SDK). Mientras siga así, este método no debería ofrecerse en la UI: el
-          // usuario llega al final del flujo y solo entonces ve el error.
-          throw new Error('PayPal en Viewer requiere integración adicional. Usa Square o cupón.')
-        }
-      }
-
-      // 2. Consumir cupón si se aplicó
-      if (appliedCoupon) {
-        const orderId = `viewer_${Date.now()}`
-        await redeemCoupon(couponCode, orderId)
-      }
-
-      // 3. Enviar foto a impresora
-      if (config?.evento_printer) {
-        const proxyUrl = fixImageUrl(selectedPhoto.uri_full || selectedPhoto.uri)
-        const resp = await fetch(proxyUrl)
-        const blob = await resp.blob()
-        const base64 = await new Promise(res => { const reader = new FileReader(); reader.onload = () => res(reader.result); reader.readAsDataURL(blob) })
-        await sendPhoto({ event: config.evento_printer, image: base64, times: copies, name: `print_${copies}_${selectedPhoto.id || 'viewer'}`, phone: '000000000', orientation: 'landscape' })
-      }
-      setPrintDone(true)
-    } catch (e) { console.error(e); setSquareError(e.message) }
-    finally { setPrinting(false) }
-  }
-
-  // Inicializar Square cuando se muestra modal de pago y se selecciona tarjeta
-  useEffect(() => {
-    if (showPayment && paymentMethod === 'square') {
-      const initSquare = async () => {
-        if (!window.Square) { setSquareError('Pasarela no cargada'); return }
-        try {
-          const payments = window.Square.payments(SQUARE_APP_ID, SQUARE_LOCATION_ID)
-          const card = await payments.card()
-          await card.attach('#card-container')
-          setSquareCard(card)
-          setSquareError('')
-        } catch (e) { setSquareError(e.message) }
-      }
-      initSquare()
-    }
-  }, [showPayment, paymentMethod])
+  // El Monitor no cobra: el precio solo se muestra en el pie, leído de textos.precio1.
+  // La validación/canje de cupones vive en el móvil (allí es donde se paga); aquí solo se
+  // GENERAN para dárselos al huésped (ver ADMIN CUPONES).
+  function handleSelectPhoto(photo) { setSelectedPhoto(photo) }
 
   // ── ADMIN CUPONES ──
   const handleGenerateCoupon = async () => {
@@ -912,75 +760,18 @@ export default function ViewerApp() {
         </div>
       )}
 
-      {/* MODAL DE IMPRESIÓN (con soporte de cupón) */}
+      {/* VISOR DE FOTO. Solo mirar: recepción no cobra ni imprime desde el Monitor. */}
       {selectedPhoto && (
-        <div className="modal d-block print-modal-overlay" tabIndex="-1" onClick={() => !printing && setSelectedPhoto(null)}>
+        <div className="modal d-block print-modal-overlay" tabIndex="-1" onClick={() => setSelectedPhoto(null)}>
           <div className="modal-dialog modal-dialog-centered modal-xl modal-fullscreen-sm-down" onClick={e => e.stopPropagation()}>
             <div className="modal-content bg-dark border border-secondary print-modal">
               <div className="print-modal-header">
-                {printDone ? (
-                  <span className="text-success fw-bold font-mono"><i className="bi bi-check-circle-fill me-2" />¡Impresión enviada!</span>
-                ) : (
-                  <span className="text-light fw-bold font-mono"><i className="bi bi-printer me-2 text-warning" />Total {copies} {copies === 1 ? 'foto' : 'fotos'} {getPrecio(copies) ? `${finalPrice}€` : ''}</span>
-                )}
+                <span className="text-light fw-bold font-mono"><i className="bi bi-image me-2 text-warning" />{currentRoomLabel}</span>
                 <button className="btn-close btn-close-white print-modal-close" onClick={() => setSelectedPhoto(null)} />
               </div>
               <div className="print-modal-body">
-                <div className="row g-0">
-                  <div className="col-md-7 print-image-container">
-                    <img src={fixImageUrl(selectedPhoto.uri || selectedPhoto.uri_full)} alt="Foto" className="print-image" draggable={false} onContextMenu={e=>e.preventDefault()} onDragStart={e=>e.preventDefault()} />
-                  </div>
-                  <div className="col-md-5 print-panel">
-                    <div>
-                      <p className="copies-title"><i className="bi bi-stack me-1" />Número de copias</p>
-                      <div className="copies-buttons">
-                        {[1,2,3].map(n => (
-                          <button key={n} className={`btn fw-bold copy-btn ${copies === n ? 'copy-btn-active' : 'copy-btn-inactive'}`} onClick={() => setCopies(n)}>
-                            <span>{copies === n ? <i className="bi bi-check-circle-fill copy-icon" /> : <i className="bi bi-circle copy-icon" />}{n} {n === 1 ? 'copia' : 'copias'}</span>
-                            {textos?.[`precio${n}`] && <span className={`badge copy-price-badge ${copies === n ? 'copy-price-badge-active' : 'copy-price-badge-inactive'}`}>{textos[`precio${n}`]}€</span>}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                    <div className="print-actions">
-                      {printDone ? (
-                        <>
-                          <div className="alert alert-success print-success-alert"><i className="bi bi-check-circle-fill me-1" />{copies} {copies === 1 ? 'copia enviada' : 'copias enviadas'} a imprimir</div>
-                          <button className="btn btn-outline-secondary cancel-button" onClick={() => setSelectedPhoto(null)}><i className="bi bi-arrow-left me-1" /> Volver a la galería</button>
-                        </>
-                      ) : showPayment ? (
-                        <>
-                          <div className="mb-3">
-                            <p className="text-light mb-2">Método de pago:</p>
-                            <div className="d-flex gap-2 flex-wrap">
-                              <button className={`btn ${paymentMethod === 'paypal' ? 'btn-warning text-dark' : 'btn-outline-light'}`} onClick={() => setPaymentMethod('paypal')}><i className="bi bi-paypal me-1" /> PayPal</button>
-                              <button className={`btn ${paymentMethod === 'square' ? 'btn-warning text-dark' : 'btn-outline-light'}`} onClick={() => setPaymentMethod('square')}><i className="bi bi-credit-card me-1" /> Tarjeta</button>
-                            </div>
-                            {/* Cupón */}
-                            <div className="mt-3">
-                              <div className="d-flex gap-2 align-items-center">
-                                <input type="text" className={`form-control bg-black border-secondary text-light text-uppercase ${couponError ? 'is-invalid' : ''}`} placeholder="Código de cupón" value={couponCode} onChange={e => setCouponCode(e.target.value)} style={{ fontFamily: 'monospace' }} />
-                                <button className="btn btn-outline-success" onClick={handleApplyCoupon} disabled={couponLoading}>{couponLoading ? <span className="spinner-border spinner-border-sm" /> : 'Aplicar'}</button>
-                              </div>
-                              {couponError && <div className="text-danger mt-1 small">{couponError}</div>}
-                              {appliedCoupon && <div className="text-success mt-1 small"><i className="bi bi-check-circle-fill me-1" />{appliedCoupon.type === 'discount' ? `Descuento: ${appliedCoupon.amount_eur}` : `Pago completo cubierto (${appliedCoupon.amount_eur})`}</div>}
-                            </div>
-                            {paymentMethod === 'square' && <div id="card-container" className="mt-3 p-2 border border-secondary rounded bg-dark"></div>}
-                            {squareError && <div className="alert alert-danger mt-2 mb-0">{squareError}</div>}
-                          </div>
-                          <button className="btn btn-success text-dark fw-bold print-button" onClick={handlePayment} disabled={printing || !paymentMethod || (appliedCoupon?.type==='full' && finalCents>0)}>
-                            {printing ? <><span className="spinner-border spinner-border-sm me-2" /> Procesando…</> : <><i className="bi bi-check-circle-fill me-2" /> Pagar {finalPrice}€</>}
-                          </button>
-                          <button className="btn btn-outline-secondary cancel-button" onClick={() => setShowPayment(false)}><i className="bi bi-arrow-left me-1" /> Volver</button>
-                        </>
-                      ) : (
-                        <>
-                          <button className="btn btn-warning text-dark fw-bold print-button" onClick={() => setShowPayment(true)}><i className="bi bi-credit-card me-2" /> Pagar</button>
-                          <button className="btn btn-outline-secondary cancel-button" onClick={() => setSelectedPhoto(null)}><i className="bi bi-x me-1" /> Cancelar</button>
-                        </>
-                      )}
-                    </div>
-                  </div>
+                <div className="photo-viewer-container">
+                  <img src={fixImageUrl(selectedPhoto.uri_full || selectedPhoto.uri)} alt="Foto" className="photo-viewer-image" draggable={false} onContextMenu={e=>e.preventDefault()} onDragStart={e=>e.preventDefault()} />
                 </div>
               </div>
             </div>
@@ -1066,7 +857,6 @@ export default function ViewerApp() {
                 <span className="badge service-disabled-badge"><i className="bi bi-exclamation-triangle-fill me-1" />Servicio desactivado para los huéspedes</span>
               )}
               <button className="btn btn-sm header-action-btn" onClick={() => setShowEventModal(true)} title="Cambiar la habitación que muestra el monitor"><i className="bi bi-door-open me-1" />{uuid ? currentRoomLabel : 'Elegir habitación'}</button>
-              {uuid && <button className={`btn btn-sm header-action-btn ${autoplay ? 'header-action-btn-active' : ''}`} onClick={() => setAutoplay(!autoplay)} title={autoplay ? 'Detener autoplay' : 'Iniciar autoplay (15s por página)'}><i className={`bi ${autoplay ? 'bi-pause-circle-fill' : 'bi-play-circle-fill'} me-1`} />{autoplay ? 'Autoplay ON' : 'Autoplay'}</button>}
               {uuid && <button className="btn btn-sm header-action-btn" onClick={() => setQrRoom(currentRoom || { nombre: '', codigo: currentRoomCode })} title="Mostrar QR de la habitación actual"><i className="bi bi-qr-code me-1" />Ver QR</button>}
               <button className="btn btn-sm header-action-btn" onClick={() => setShowPrivacyModal(true)}><i className="bi bi-info-circle me-1" /> Términos</button>
               <button className="btn btn-sm header-action-btn" onClick={openAdmin}><i className="bi bi-gear me-1" /> Admin</button>
@@ -1105,7 +895,7 @@ export default function ViewerApp() {
           <>
             <div className="viewer-gallery-header">
               <h3 className="gallery-title">Fotos de {currentRoomLabel}</h3>
-              <span className="gallery-hint">CLIC EN UNA FOTO PARA IMPRIMIR</span>
+              <span className="gallery-hint">CLIC EN UNA FOTO PARA VERLA MÁS GRANDE</span>
             </div>
             <div className="viewer-gallery-grid">
               {allPhotos.map(photo => <PhotoCard key={photo.id || photo.uri} photo={photo} onSelect={handleSelectPhoto} logoSrc={logoSrc} />)}
@@ -1126,7 +916,6 @@ export default function ViewerApp() {
         <div className="viewer-footer-content">
           {textos?.precio1 && <span className="price-badge">PRECIO POR FOTO <span className="badge">{textos.precio1}€</span></span>}
           {textos?.empresa && <span className="company-name">{textos.empresa}</span>}
-          <span className="print-count">IMPRESAS HOY <span className="print-count-number">{printCount}</span></span>
         </div>
       </footer>
     </div>

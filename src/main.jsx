@@ -5,6 +5,12 @@ import ViewerApp from './viewer/ViewerApp'
 import PrinterApp from './printer/PrinterApp'
 import MobileApp from './mobile/MobileApp'
 import './styles/global.css'
+import { clearStorageOnNewBuild } from './shared/storage'
+
+// Antes de montar nada: si el visitante viene de una versión anterior, su estado guardado
+// se descarta. Va aquí (una sola llamada) y no en cada app, porque main.jsx importa las
+// tres y la primera en ejecutarse marcaría la versión como ya vista.
+clearStorageOnNewBuild(['printbox_mobile_state', 'printbox_viewer_state'])
 
 function RedirectByDevice() {
   const navigate = useNavigate()

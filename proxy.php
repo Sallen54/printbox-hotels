@@ -317,7 +317,7 @@ function encodeMimeSubject($text) {
 
 // Construye y envía (mail() nativo de IONOS, sin librerías) el aviso de pedido a recepción,
 // con las miniaturas embebidas inline vía Content-ID — sin necesidad de SMTP/PHPMailer.
-function sendRoomOrderEmail($to, $room, $items, $total, $paymentMethod) {
+function sendRoomOrderEmail($to, $room, $items, $numFotos, $total, $paymentMethod) {
     $to = filter_var(trim($to), FILTER_VALIDATE_EMAIL);
     if (!$to) return false;
 
@@ -326,20 +326,18 @@ function sendRoomOrderEmail($to, $room, $items, $total, $paymentMethod) {
     $totalEsc = htmlspecialchars($total, ENT_QUOTES, 'UTF-8');
     $paymentEsc = htmlspecialchars($paymentMethod, ENT_QUOTES, 'UTF-8');
 
-    $rowsHtml = '';
+    $imgsHtml = '';
     $imageParts = '';
     $i = 0;
     foreach ((array)$items as $item) {
         $i++;
-        $copies = isset($item['copies']) ? (int) $item['copies'] : 1;
         $dataUrl = $item['thumbnail'] ?? '';
         if (!preg_match('#^data:image/(\w+);base64,(.+)$#', $dataUrl, $m)) continue;
         $ext = strtolower($m[1]);
         $imgData = base64_decode($m[2]);
         if ($imgData === false) continue;
         $cid = "pbphoto{$i}";
-        $rowsHtml .= "<tr><td style=\"padding:8px;border-bottom:1px solid #eee;\"><img src=\"cid:{$cid}\" width=\"110\" style=\"border-radius:6px;display:block;\" alt=\"Foto {$i}\"></td>"
-            . "<td style=\"padding:8px;border-bottom:1px solid #eee;text-align:center;font-family:Arial,sans-serif;font-size:15px;\">{$copies}</td></tr>";
+        $imgsHtml .= "<img src=\"cid:{$cid}\" width=\"96\" style=\"border-radius:6px;margin:0 6px 6px 0;\" alt=\"Foto {$i}\">";
         $imageParts .= "--{$boundary}\r\n"
             . "Content-Type: image/{$ext}; name=\"foto{$i}.{$ext}\"\r\n"
             . "Content-Transfer-Encoding: base64\r\n"
@@ -349,7 +347,15 @@ function sendRoomOrderEmail($to, $room, $items, $total, $paymentMethod) {
             . "\r\n";
     }
 
-    if ($rowsHtml === '') return false; // nada que mostrar, no molestar a recepción con un email vacío
+    if ($imgsHtml === '') return false; // nada que mostrar, no molestar a recepción con un email vacío
+
+    // El móvil manda sólo las primeras miniaturas de un pedido grande: el resto se resume
+    // para que el correo no pese de más (mail() de IONOS lo rechazaría).
+    $fotosEsc = max($i, (int) $numFotos);
+    $restantes = $fotosEsc - $i;
+    $restoHtml = $restantes > 0
+        ? "<p style=\"margin:10px 0 0;font-size:13px;color:#888;\">y {$restantes} foto(s) m&aacute;s (no se muestran todas para no hacer el correo pesado).</p>"
+        : '';
 
     $htmlBody = <<<HTML
 <html><body style="font-family:Arial,sans-serif;background:#f4f4f4;padding:24px;margin:0;">
@@ -357,13 +363,9 @@ function sendRoomOrderEmail($to, $room, $items, $total, $paymentMethod) {
   <div style="background:#14110d;color:#c9a24b;padding:18px 22px;font-size:18px;font-weight:bold;">Printbox Hotels</div>
   <div style="padding:22px;">
     <p style="margin:0 0 16px;font-size:16px;color:#222;">Nuevo pedido &mdash; <strong>Habitaci&oacute;n {$roomEsc}</strong></p>
-    <table style="width:100%;border-collapse:collapse;">
-      <thead><tr>
-        <th style="text-align:left;padding:8px;border-bottom:2px solid #eee;font-family:Arial,sans-serif;font-size:12px;color:#888;text-transform:uppercase;">Foto</th>
-        <th style="padding:8px;border-bottom:2px solid #eee;font-family:Arial,sans-serif;font-size:12px;color:#888;text-transform:uppercase;">Copias</th>
-      </tr></thead>
-      <tbody>{$rowsHtml}</tbody>
-    </table>
+    <p style="margin:0 0 12px;font-size:14px;color:#555;"><strong>{$fotosEsc}</strong> foto(s) para imprimir &middot; una copia de cada una</p>
+    <div>{$imgsHtml}</div>
+    {$restoHtml}
     <p style="margin-top:18px;font-size:15px;color:#222;">Total pagado: <strong>{$totalEsc}&euro;</strong> &middot; {$paymentEsc}</p>
   </div>
 </div>
@@ -1069,7 +1071,9 @@ if ($uri === '/print/job')      { echo json_encode(['ok' => true, 'count' => 0])
 
 // ── /printbox/* ──
 if (strpos($uri, '/printbox/') === 0) {
-    getCsrfToken();
+    // Una sola llamada: getCsrfToken() ya rellena el frasco de cookies y devuelve el token
+    // leído de él. Estaba dos veces, y eso era una ida y vuelta HTTPS extra a Laravel en
+    // CADA petición — con un pedido de 80 fotos, 80 viajes tirados.
     $csrf    = getCsrfToken();
     $headers = $csrf ? ['X-XSRF-TOKEN: ' . $csrf] : [];
 
@@ -1147,17 +1151,18 @@ if (strpos($uri, '/printbox/') === 0) {
         $items = $data['items'] ?? [];
         $total = $data['total'] ?? '0';
         $paymentMethod = $data['paymentMethod'] ?? '';
+        // En un pedido grande el móvil manda sólo las primeras miniaturas (el correo no
+        // puede llevarlas todas) y el total real de fotos en `fotos`.
+        $numFotos = max(count((array) $items), (int) ($data['fotos'] ?? 0));
 
         // El hotel llega en ?hotel= (lo añade el móvil desde el QR); el email de
         // recepción se lee del textos.txt de ESE hotel.
         $configDir = getReadConfigDir();
 
         // Un pedido completo = fotos enviadas a imprimir. Se registra aunque no haya email.
-        $copias = 0;
-        foreach ((array) $items as $it) { $copias += max(1, (int) ($it['copies'] ?? 1)); }
         pbhLogActividad($configDir, 'ENVIADO_A_IMPRIMIR', sprintf(
-            'habitación %s · %d foto(s) · %d copia(s) · %s€ · %s',
-            $room !== '' ? $room : '?', count((array) $items), $copias, $total, $paymentMethod ?: '-'
+            'habitación %s · %d foto(s) · %s€ · %s',
+            $room !== '' ? $room : '?', $numFotos, $total, $paymentMethod ?: '-'
         ));
 
         $emailTo = getHotelReceptionEmail($configDir);
@@ -1167,7 +1172,7 @@ if (strpos($uri, '/printbox/') === 0) {
             exit();
         }
 
-        $sent = sendRoomOrderEmail($emailTo, $room, $items, $total, $paymentMethod);
+        $sent = sendRoomOrderEmail($emailTo, $room, $items, $numFotos, $total, $paymentMethod);
         echo json_encode(['ok' => (bool) $sent]);
         exit();
     }

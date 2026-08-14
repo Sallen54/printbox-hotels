@@ -51,6 +51,29 @@ Header always set X-Frame-Options "SAMEORIGIN"
 </IfModule>
 Header always set Strict-Transport-Security "max-age=15552000" env=PBH_HTTPS
 
+# ── Caché del navegador ──
+# Sin estas reglas el navegador decide por su cuenta y se queda con el index.html viejo:
+# como es quien apunta a los bundles con hash, el visitante sigue viendo la versión
+# anterior aunque ya hayas subido la nueva. Es el "se ve lo de ayer" tras actualizar.
+#
+# index.html: NUNCA se cachea, así cada visita descubre los bundles nuevos al instante.
+<FilesMatch "\.html$">
+    Header set Cache-Control "no-cache, no-store, must-revalidate"
+    Header set Pragma "no-cache"
+</FilesMatch>
+
+# Bundles de Vite: llevan hash en el nombre (index-BWjh3S1L.js), así que un cambio genera
+# un fichero distinto. Se pueden cachear para siempre sin riesgo de servir algo viejo.
+<FilesMatch "-[A-Za-z0-9_-]{8,}\.(js|css)$">
+    Header set Cache-Control "public, max-age=31536000, immutable"
+</FilesMatch>
+
+# Estáticos SIN hash (logo de respaldo, iconos, fuentes): caché corta para que un cambio
+# se propague en un día en lugar de quedarse clavado meses.
+<FilesMatch "\.(png|jpe?g|gif|svg|ico|woff2?)$">
+    Header set Cache-Control "public, max-age=86400"
+</FilesMatch>
+
 # ¡IMPORTANTE! Las reglas de API DEBEN ir ANTES de la regla de archivos/directorios reales
 # Porque /config/ es una carpeta real que existe, Apache la ve como directorio
 # y no la reescribe si la regla de archivos/directorios reales viene primero

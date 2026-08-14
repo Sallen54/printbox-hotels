@@ -193,19 +193,6 @@ export async function getPrintCount() {
   }
 }
 
-export async function printJob({ imageUrl, imageName, printer, delay = 5 }) {
-  const res = await fetch(`${BACKEND_URL}/print/job`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ imageUrl, imageName, printer, delay }),
-  })
-  if (!res.ok) {
-    const err = await res.json()
-    throw new Error(err.error || 'Error al imprimir')
-  }
-  return res.json()
-}
-
 function normalizeEventCode(eventCode = '') {
   if (!eventCode) return ''
   return String(eventCode).trim().replace(/^ev[-_]?/i, '')
@@ -375,13 +362,14 @@ export async function sendPhoto({ event, image, times = 1, name, phone, print, o
 
 // Avisa a recepción por e-mail de que una habitación ha enviado fotos.
 // items: [{ thumbnail: 'data:image/jpeg;base64,...', copies: N }, ...] — una fila por foto del pedido (no por copia).
-export async function notifyRoomOrder({ hotel = '', room, items, total, paymentMethod }) {
+export async function notifyRoomOrder({ hotel = '', room, items, fotos, total, paymentMethod }) {
   // El email de recepción se lee del hotel indicado (?hotel= lo resuelve el backend).
   const q = hotel ? `?hotel=${encodeURIComponent(hotel)}` : ''
   const res = await fetch(`${BACKEND_URL}/printbox/notify-order${q}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ room: normalizeEventCode(room), items, total, paymentMethod }),
+    // `items` puede traer sólo las primeras miniaturas; `fotos` es el total real del pedido.
+    body: JSON.stringify({ room: normalizeEventCode(room), items, fotos, total, paymentMethod }),
   })
   const data = await res.json().catch(() => ({}))
   if (!res.ok) throw new Error(data?.error || 'Error al notificar a recepción')

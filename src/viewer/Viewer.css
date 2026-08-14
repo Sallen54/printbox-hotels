@@ -152,12 +152,6 @@
   background-color: var(--vw-cream-dark) !important;
 }
 
-.header-action-btn-active {
-  background-color: var(--vw-gold) !important;
-  border-color: var(--vw-gold) !important;
-  color: #fffdf7 !important;
-}
-
 .service-disabled-badge {
   background-color: #b02a37 !important;
   color: #fff;
@@ -255,7 +249,9 @@
   padding: 0;
 }
 
-.print-image-container {
+/* Visor de foto: el Monitor solo muestra, ya no cobra ni imprime, así que la foto ocupa
+   todo el modal en lugar de compartirlo con el panel de copias y pago. */
+.photo-viewer-container {
   background: #e9dfc8;
   display: flex;
   align-items: center;
@@ -263,122 +259,12 @@
   min-height: 300px;
 }
 
-.print-image {
-  width: 100%;
-  max-height: 70vh;
+.photo-viewer-image {
+  max-width: 100%;
+  max-height: 80vh;
   object-fit: contain;
   display: block;
   box-shadow: 0 8px 24px rgba(64, 48, 20, 0.25);
-}
-
-.print-panel {
-  display: flex;
-  flex-direction: column;
-  justify-content: space-between;
-  padding: 1rem;
-  gap: 0.75rem;
-}
-
-.copies-title {
-  font-size: 11px;
-  letter-spacing: 2px;
-  text-transform: uppercase;
-  font-family: 'DM Mono', monospace;
-  color: #8a7a5e;
-  margin-bottom: 0.75rem;
-}
-
-.copies-buttons {
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-}
-
-.copy-btn {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 0.6rem 0.85rem;
-  font-weight: 600;
-  border-radius: 0.65rem;
-}
-
-.copy-btn-active {
-  background-color: #b08a35;
-  border-color: #b08a35;
-  color: #fffdf7;
-}
-
-.copy-btn-inactive {
-  background-color: transparent;
-  border-color: rgba(176, 138, 53, 0.4);
-  color: #2b2013;
-}
-
-.copy-icon {
-  margin-right: 0.5rem;
-}
-
-.copy-price-badge {
-  font-size: 0.75rem;
-  padding: 0.25rem 0.5rem;
-  font-family: 'DM Mono', monospace;
-}
-
-.copy-price-badge-active {
-  background-color: rgba(255, 253, 247, 0.2);
-  color: #fffdf7;
-}
-
-.copy-price-badge-inactive {
-  background-color: #f1e6cd;
-  color: #a07a24;
-}
-
-.print-actions {
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-  margin-top: 0.5rem;
-}
-
-.print-success-alert {
-  text-align: center;
-  margin-bottom: 0;
-  padding: 0.6rem;
-  font-family: 'DM Mono', monospace;
-  font-size: 0.8rem;
-  background-color: rgba(74, 124, 74, 0.12);
-  border: 1px solid rgba(74, 124, 74, 0.4);
-  color: #3d663d;
-  border-radius: 0.65rem;
-}
-
-.print-button {
-  font-weight: 600;
-  padding: 0.75rem;
-  font-size: 18px;
-  border-radius: 999px;
-  background-color: #b08a35 !important;
-  color: #fffdf7 !important;
-  border-color: #b08a35 !important;
-}
-
-.print-button:hover {
-  background-color: var(--vw-gold-dark, #9a7628) !important;
-  border-color: var(--vw-gold-dark, #9a7628) !important;
-}
-
-.cancel-button {
-  font-size: 0.875rem;
-  background-color: transparent !important;
-  color: #8a7a5e !important;
-  border-color: transparent !important;
-}
-
-.cancel-button:hover {
-  color: #2b2013 !important;
-  background-color: transparent !important;
 }
 
 /* ========== GALERÍA ========== */
@@ -600,19 +486,6 @@
   font-size: 0.72rem;
   letter-spacing: 2px;
   text-transform: uppercase;
-}
-
-.print-count {
-  color: #b8ab8f;
-  font-family: 'DM Mono', monospace;
-  font-size: 0.75rem;
-  letter-spacing: 1px;
-  text-transform: uppercase;
-}
-
-.print-count-number {
-  color: var(--pb-accent, #c9a24b);
-  font-weight: 500;
 }
 
 /* ========== RESPONSIVE ========== */

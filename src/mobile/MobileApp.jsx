@@ -7,18 +7,80 @@ window.isMobile = true
 
 // ── UTILIDADES ──
 
-function resizeImageBase64(dataUrl, maxSize = 1200) {
+// Carga una imagen (acepta `data:` y `blob:`) y devuelve el elemento ya decodificado, o
+// **null** si el navegador no puede con ella (formato que no soporta, archivo dañado, falta
+// de memoria) o si tarda demasiado.
+//
+// El null y el temporizador son imprescindibles: antes solo se escuchaba `onload`, así que
+// una única foto que no cargaba dejaba la promesa sin resolver y la importación se quedaba
+// colgada para siempre a mitad ("Preparando tus fotos… 30/40").
+function cargarImagen(src, timeoutMs = 15000) {
   return new Promise((resolve) => {
     const img = new Image()
-    img.onload = () => {
-      const canvas = document.createElement('canvas')
-      const ratio = Math.min(maxSize / img.width, maxSize / img.height, 1)
-      canvas.width = img.width * ratio
-      canvas.height = img.height * ratio
-      canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height)
-      resolve(canvas.toDataURL('image/jpeg', 0.85))
+    let resuelto = false
+    const terminar = (valor) => {
+      if (resuelto) return
+      resuelto = true
+      clearTimeout(temporizador)
+      img.onload = null
+      img.onerror = null
+      resolve(valor)
     }
-    img.src = dataUrl
+    const temporizador = setTimeout(() => terminar(null), timeoutMs)
+    img.onerror = () => terminar(null)
+    img.onload = () => terminar(img)
+    img.src = src
+  })
+}
+
+// Reduce una imagen ya cargada a un JPEG en base64. Solo se usa para las MINIATURAS de la
+// interfaz y del e-mail: la foto que se imprime se sube siempre original.
+function miniaturaDe(img, maxSize) {
+  try {
+    const canvas = document.createElement('canvas')
+    const ratio = Math.min(maxSize / img.width, maxSize / img.height, 1)
+    canvas.width = Math.max(1, Math.round(img.width * ratio))
+    canvas.height = Math.max(1, Math.round(img.height * ratio))
+    canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height)
+    const salida = canvas.toDataURL('image/jpeg', 0.85)
+    canvas.width = 0 // libera el búfer del canvas (iOS es muy sensible con esto)
+    canvas.height = 0
+    return salida
+  } catch { return null }
+}
+
+// Redimensiona a partir de una fuente. Solo se usa como red de seguridad al subir (ver
+// LIMITE_SUBIDA_CHARS) y para la foto de la cámara.
+async function resizeImage(src, maxSize = 1200, timeoutMs = 15000) {
+  const img = await cargarImagen(src, timeoutMs)
+  return img ? miniaturaDe(img, maxSize) : null
+}
+
+// Formato legible de un fichero, para poder decirle al huésped QUÉ falla (un nombre como
+// IMG_4471 no le dice nada; "DNG" sí, y además es lo que hay que explicarle).
+// "DNG", "DNG y HEIC", "DNG, HEIC y 2 más" — agrupado, no una lista de nombres.
+function resumenFormatos(formatos) {
+  const unicos = [...new Set(formatos)]
+  if (unicos.length === 1) return unicos[0]
+  if (unicos.length === 2) return `${unicos[0]} y ${unicos[1]}`
+  return `${unicos.slice(0, 2).join(', ')} y ${unicos.length - 2} más`
+}
+
+function formatoDe(file) {
+  const ext = (file?.name || '').split('.').pop()
+  if (ext && ext.length <= 5 && /^[a-z0-9]+$/i.test(ext)) return ext.toUpperCase()
+  const tipo = (file?.type || '').split('/')[1]
+  return tipo ? tipo.toUpperCase() : 'desconocido'
+}
+
+// Lee un fichero tal cual y lo devuelve en base64, sin recodificar ni redimensionar: es lo
+// que hace la app Flutter (`base64Encode(await photo.readAsBytes())`).
+function ficheroABase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(reader.result)
+    reader.onerror = () => reject(new Error('No se pudo leer la foto'))
+    reader.readAsDataURL(file)
   })
 }
 
@@ -32,6 +94,44 @@ const STEP_SUCCESS = 'success'
 // El huésped sube desde la galería (el selector del móvil ya deja hacer una foto). El flujo
 // STEP_CAMERA se conserva entero: poner esto a true lo reactiva.
 const CAMARA_HABILITADA = false
+
+// Tope de fotos por pedido. Un pedido grande es un caso real (fotos de las vacaciones),
+// así que el límite alto va acompañado de: miniaturas para pintar la galería (si se
+// pintaran las de 1400px el móvil se queda sin memoria), envío en paralelo con reintento
+// y sólo las primeras miniaturas en el e-mail a recepción.
+const MAX_FOTOS = 80
+
+// Miniatura para la interfaz y el e-mail. La foto que se imprime NO se toca: se sube el
+// original tal cual, igual que la app Flutter, para no perder calidad de impresión.
+const THUMB_SIZE = 320
+
+// Red de seguridad al subir: si el base64 del original supera esto (≈ 9 MB, o sea una foto
+// de más de ~6,5 MB), se sube una versión de 2400px. No es por calidad —2400px cubre 15x20
+// a 300 ppp— sino porque un POST así de grande lo rechazan tanto PHP (post_max_size) como
+// los límites del hosting, y el pedido YA está pagado cuando se sube.
+const LIMITE_SUBIDA_CHARS = 9000000
+const ANCHO_MAXIMO_SEGURO = 2400
+
+// Copia que se manda al evento de la habitación para que recepción vea la foto en el
+// Monitor. Ahí sólo se mira (no se imprime ni se cobra), así que no hace falta el original.
+const ANCHO_MONITOR = 1600
+
+// Formatos que se suben tal cual. Cualquier otro (HEIC de iPhone, WEBP…) se recodifica a
+// JPEG manteniendo la resolución, porque la impresión no los procesa.
+const FORMATOS_DIRECTOS = /^image\/(jpe?g|png)$/i
+
+// Fotos que se envían a la vez al backend. Se sube el original (varios MB cada una), así
+// que el cuello de botella es la subida, no la latencia: con 2 en vuelo se aprovecha el
+// ancho de banda sin tener media docena de fotos enteras en memoria a la vez.
+const CONCURRENCIA_ENVIO = 2
+
+// Miniaturas que se incrustan en el e-mail de recepción. Con 80 el correo pesaría ~2 MB y
+// mail() de IONOS lo rechazaría; el resto se resume con "y N fotos más".
+const MAX_MINIATURAS_EMAIL = 12
+
+// Las fotos NO se guardan en localStorage: ahora el pedido son ficheros del móvil (no
+// serializables) y, aunque lo fueran, 80 originales desbordarían de largo la cuota (~5 MB).
+// Se guarda el resto del estado; al recargar, el huésped vuelve a elegir las fotos.
 
 // ── CONSTANTES DE SQUARE ──
 const SQUARE_APP_ID = 'sq0idp-OV9y595m1kR_UU3QRest7Q'
@@ -66,9 +166,21 @@ export default function MobileApp() {
   const streamRef = useRef(null)
   const [facingMode, setFacingMode] = useState('environment')
   const [capturedPhotos, setCapturedPhotos] = useState([])
+  // Progreso de la importación desde la galería: {hechas, total}. Redimensionar 80 fotos
+  // lleva su tiempo y sin esto parece que el móvil se ha quedado colgado.
+  const [importProgreso, setImportProgreso] = useState(null)
+  // Progreso del envío al backend: {hechas, total}. Un pedido grande tarda, y sin esto
+  // el huésped ve la pantalla congelada después de haber pagado.
+  const [envioProgreso, setEnvioProgreso] = useState(null)
 
   // --- Subida de fotos ya guardadas en el móvil (galería del dispositivo) ---
   const galleryFileInputRef = useRef(null)
+  // Permite abortar una importación larga sin cerrar la app (ref y no estado: se consulta
+  // dentro del bucle, que no ve los cambios de estado).
+  const cancelarImportRef = useRef(false)
+  // Nombres de las fotos que el móvil no ha podido leer. Van a un aviso fijo (no a un
+  // toast) para que se puedan leer con calma y sepamos qué archivos fallan.
+  const [fotosOmitidas, setFotosOmitidas] = useState([])
 
   // --- Estados de envío y pago ---
   const [toast, setToast] = useState(null)
@@ -121,9 +233,13 @@ export default function MobileApp() {
   }
 
   // ── LOCALSTORAGE ──
+  // Las fotos van en base64 y son lo único que puede desbordar la cuota del navegador.
+  // Si no caben se guarda el resto del estado (habitación, paso, textos) sin ellas: es
+  // preferible que el huésped tenga que volver a elegirlas a que falle el guardado entero.
   const saveToLocalStorage = () => {
-    const data = { hotelId, eventCode, step, capturedPhotos, uuid, textos }
-    localStorage.setItem('printbox_mobile_state', JSON.stringify(data))
+    try {
+      localStorage.setItem('printbox_mobile_state', JSON.stringify({ hotelId, eventCode, step, uuid, textos }))
+    } catch {}
   }
 
   const loadFromLocalStorage = () => {
@@ -133,8 +249,10 @@ export default function MobileApp() {
         const parsed = JSON.parse(data)
         if (parsed.hotelId) setHotelId(parsed.hotelId)
         setEventCode(parsed.eventCode || '')
-        setStep(parsed.step || STEP_EVENT)
-        setCapturedPhotos(parsed.capturedPhotos || [])
+        // Las fotos no se guardan, así que tras recargar nunca hay pedido: se vuelve a la
+        // galería en vez de dejarle en una pantalla de pago vacía.
+        const paso = parsed.step || STEP_EVENT
+        setStep(paso === STEP_ORDER ? STEP_GALLERY : paso)
         setUuid(parsed.uuid || null)
         if (parsed.textos) setTextos(parsed.textos)
         return parsed
@@ -427,9 +545,17 @@ export default function MobileApp() {
     canvas.width = video.videoWidth
     canvas.height = video.videoHeight
     canvas.getContext('2d').drawImage(video, 0, 0)
+    // La cámara ya da la foto a la resolución del vídeo: se sube tal cual, sin reducirla.
     const raw = canvas.toDataURL('image/jpeg', 0.92)
-    const resized = await resizeImageBase64(raw, 1400)
-    setCapturedPhotos(prev => [...prev, { dataUrl: resized, copies: 1, id: Date.now() }])
+    if (capturedPhotos.length >= MAX_FOTOS) { showToast(`Máximo ${MAX_FOTOS} fotos por pedido`); return }
+    const thumb = await resizeImage(raw, THUMB_SIZE)
+    if (!thumb) { showToast('No se ha podido procesar la foto'); return }
+    setCapturedPhotos(prev => [...prev, {
+      dataUrl: raw,
+      thumb,
+      orientation: canvas.height > canvas.width ? 'portrait' : 'landscape',
+      id: Date.now(),
+    }])
     showToast('Foto capturada')
   }
   async function flipCamera() {
@@ -441,45 +567,87 @@ export default function MobileApp() {
     else stopCamera()
     return () => stopCamera()
   }, [step, facingMode])
-  function updateCapturedCopies(id, copies) {
-    setCapturedPhotos(prev => prev.map(p => p.id === id ? { ...p, copies } : p))
-  }
   function removeCaptured(id) {
     setCapturedPhotos(prev => prev.filter(p => p.id !== id))
   }
 
   // ── SUBIR FOTOS YA GUARDADAS EN EL MÓVIL (galería del dispositivo) ──
   async function handleGalleryFilesSelected(e) {
-    const files = Array.from(e.target.files || [])
+    const seleccionadas = Array.from(e.target.files || [])
     e.target.value = '' // permite volver a elegir el mismo archivo más tarde
-    for (const file of files) {
-      const raw = await new Promise(res => {
-        const reader = new FileReader()
-        reader.onload = () => res(reader.result)
-        reader.readAsDataURL(file)
-      })
-      const resized = await resizeImageBase64(raw, 1400)
-      setCapturedPhotos(prev => [...prev, { dataUrl: resized, copies: 1, id: Date.now() + Math.random() }])
+    if (!seleccionadas.length) return
+
+    const hueco = MAX_FOTOS - capturedPhotos.length
+    if (hueco <= 0) { showToast(`Máximo ${MAX_FOTOS} fotos por pedido`); return }
+    const files = seleccionadas.slice(0, hueco)
+    const descartadas = seleccionadas.length - files.length
+
+    // Se procesan todas y se añaden de una vez: un setState por foto dispararía el
+    // guardado en localStorage (y un re-render con todas las imágenes) en cada vuelta.
+    setImportProgreso({ hechas: 0, total: files.length })
+    cancelarImportRef.current = false
+    setFotosOmitidas([])
+    const nuevas = []
+    const omitidas = []
+    let cancelada = false
+    try {
+      for (const file of files) {
+        if (cancelarImportRef.current) { cancelada = true; break }
+        // El fichero se queda tal cual (vive en el disco del móvil, no en memoria) y sólo
+        // se decodifica para sacar la miniatura y medir la orientación. El original se lee
+        // en el momento de subirlo, uno a uno.
+        const url = URL.createObjectURL(file)
+        let img = null
+        try {
+          img = await cargarImagen(url)
+          // Segunda oportunidad con más margen: en un lote largo el móvil se calienta y
+          // alguna foto grande no llega a tiempo a la primera.
+          if (!img) img = await cargarImagen(url, 30000)
+
+          if (img) {
+            const thumb = miniaturaDe(img, THUMB_SIZE)
+            nuevas.push({
+              file,
+              thumb,
+              // Misma regla que la app Flutter: alto > ancho → vertical; el resto (incluida
+              // la foto cuadrada) → horizontal.
+              orientation: img.naturalHeight > img.naturalWidth ? 'portrait' : 'landscape',
+              id: `${Date.now()}${Math.random()}`,
+            })
+          } else {
+            omitidas.push(formatoDe(file))
+          }
+        } finally { URL.revokeObjectURL(url) }
+
+        setImportProgreso({ hechas: nuevas.length + omitidas.length, total: files.length })
+        // Cede el hilo entre fotos: deja repintar la barra y da margen al recolector.
+        await new Promise(r => setTimeout(r, 0))
+      }
+      if (nuevas.length) setCapturedPhotos(prev => [...prev, ...nuevas])
+      if (omitidas.length) setFotosOmitidas(omitidas)
+    } finally {
+      setImportProgreso(null)
     }
-    if (files.length) showToast(`${files.length} foto${files.length > 1 ? 's' : ''} añadida${files.length > 1 ? 's' : ''} al pedido`)
+
+    // Las omitidas NO se avisan con un toast: se queda el aviso fijo en la galería, que
+    // se puede leer con calma (y cerrar), en vez de desaparecer a los segundos.
+    if (cancelada) showToast(`Importación cancelada · ${nuevas.length} foto(s) añadidas`, 4000)
+    else if (omitidas.length) { /* lo cuenta el aviso fijo */ }
+    else if (descartadas > 0) showToast(`Solo caben ${MAX_FOTOS} fotos por pedido: se han añadido ${files.length}`)
+    else showToast(`${files.length} foto${files.length > 1 ? 's' : ''} añadida${files.length > 1 ? 's' : ''} al pedido`)
   }
 
   // ── PEDIDO Y PAGO ──
-  const totalCopies = capturedPhotos.map(p => p.copies).reduce((a,b) => a+b, 0)
   // Acepta precio 0 (gratis); solo usa el default si no es un número. `parseFloat(x) || N`
   // trataría el 0 como ausente.
   const priceOr = (value, fallback) => {
     const n = parseFloat(value)
     return Number.isFinite(n) ? n : fallback
   }
-  const priceForPhoto = (copies) => {
-    const c = Math.min(copies,3)
-    const prices = [0, priceOr(textos.precio1, 1.20), priceOr(textos.precio2, 2.40), priceOr(textos.precio3, 3.60)]
-    return prices[c] ?? 0
-  }
-  const totalPrice = () => {
-    return capturedPhotos.reduce((sum, p) => sum + priceForPhoto(p.copies), 0).toFixed(2)
-  }
+  // Precio único por foto: una copia de cada una. El servidor lo recalcula con la misma
+  // tabla, por eso el pedido sigue viajando como una lista de copias (todas a 1).
+  const pricePerPhoto = () => priceOr(textos.precio1, 1.20)
+  const totalPrice = () => (capturedPhotos.length * pricePerPhoto()).toFixed(2)
 
   // Un cupón 'discount' resta su importe; uno 'full' cubre el pedido entero cuando su
   // importe alcanza el total (si no, cubre lo que puede y el resto se paga con tarjeta).
@@ -493,7 +661,7 @@ export default function MobileApp() {
   const orderPayload = () => ({
     hotel: hotelId,
     evento: normalizeEventCode(eventCode),
-    copies: capturedPhotos.map(p => p.copies),
+    copies: capturedPhotos.map(() => 1),
     coupon: appliedCoupon ? couponCode.trim().toUpperCase() : undefined,
   })
 
@@ -555,20 +723,78 @@ export default function MobileApp() {
     // Si la cola es un evento distinto, mandamos además UNA copia a la habitación (sin
     // imprimir) para que su Monitor también vea la foto.
     const displayRoomUuid = (printerUuid && uuid && printerUuid !== uuid) ? uuid : null
-    const notifyItems = []
-    for (const photo of capturedPhotos) {
-      for (let i = 0; i < (photo.copies || 1); i++) {
-        const uniqueName = `c${Date.now()}${Math.random().toString(36).substr(2,9)}_${i+1}`
-        await sendPhoto({ event: printTarget, image: photo.dataUrl, times: 1, name: uniqueName, phone: '000000000', orientation: 'portrait' })
+    const fotos = capturedPhotos
+    const total = fotos.length
+
+    // Una foto suelta puede fallar por un corte de red; como el pedido YA está cobrado,
+    // se reintenta antes de dar el envío por perdido.
+    const conReintento = async (fn) => {
+      try { return await fn() }
+      catch { await new Promise(r => setTimeout(r, 800)); return fn() }
+    }
+
+    // La foto original se lee AQUÍ, justo antes de subirla, y se descarta al terminar: así
+    // sólo hay en memoria las que están en vuelo y no las 80 del pedido.
+    const leerOriginal = async (photo) => {
+      if (!photo.file) return photo.dataUrl // foto de la cámara: ya está en base64
+
+      // Formato que la impresión no digiere (HEIC de iPhone, WEBP…): se recodifica a JPEG
+      // **sin bajar la resolución** (el tope enorme deja el tamaño intacto).
+      if (!FORMATOS_DIRECTOS.test(photo.file.type || '')) {
+        const url = URL.createObjectURL(photo.file)
+        try {
+          const jpeg = await resizeImage(url, 20000, 30000)
+          if (jpeg) return jpeg
+        } finally { URL.revokeObjectURL(url) }
       }
+
+      const original = await ficheroABase64(photo.file)
+      if (original.length <= LIMITE_SUBIDA_CHARS) return original
+      // Sólo para fotos enormes: se reduce lo justo para que el POST no lo rechace el
+      // servidor. 2400px sigue cubriendo 15x20 a 300 ppp.
+      const url = URL.createObjectURL(photo.file)
+      try { return (await resizeImage(url, ANCHO_MAXIMO_SEGURO, 30000)) || original }
+      finally { URL.revokeObjectURL(url) }
+    }
+
+    const subirFoto = async (photo) => {
+      const image = await leerOriginal(photo)
+      const orientation = photo.orientation || 'portrait'
+      const uniqueName = `c${Date.now()}${Math.random().toString(36).substr(2,9)}`
+      await conReintento(() => sendPhoto({ event: printTarget, image, times: 1, name: uniqueName, phone: '000000000', orientation }))
       if (displayRoomUuid) {
+        // Esta copia sólo se MIRA en el Monitor de recepción (nunca se imprime), así que
+        // va reducida: manda la mitad de bytes por pedido sin tocar la que se imprime.
+        const paraMonitor = await resizeImage(image, ANCHO_MONITOR, 30000)
         const dispName = `room${Date.now()}${Math.random().toString(36).substr(2,9)}`
-        await sendPhoto({ event: displayRoomUuid, image: photo.dataUrl, times: 1, name: dispName, phone: '000000000', orientation: 'portrait', print: false })
+        await conReintento(() => sendPhoto({ event: displayRoomUuid, image: paraMonitor || image, times: 1, name: dispName, phone: '000000000', orientation, print: false }))
       }
-      notifyItems.push({ thumbnail: await resizeImageBase64(photo.dataUrl, 300), copies: photo.copies || 1 })
+    }
+
+    // Envío con varias fotos en vuelo a la vez: en serie, un pedido de 80 tardaría minutos.
+    setEnvioProgreso({ hechas: 0, total })
+    let siguiente = 0
+    let hechas = 0
+    const worker = async () => {
+      while (true) {
+        const i = siguiente++
+        if (i >= total) return
+        await subirFoto(fotos[i])
+        hechas++
+        setEnvioProgreso({ hechas, total })
+      }
     }
     try {
-      await notifyRoomOrder({ hotel: hotelId, room: normalizeEventCode(eventCode), items: notifyItems, total: amountPaid ?? totalPrice(), paymentMethod })
+      await Promise.all(Array.from({ length: Math.min(CONCURRENCIA_ENVIO, total) }, worker))
+    } finally {
+      setEnvioProgreso(null)
+    }
+
+    // El e-mail lleva sólo las primeras miniaturas (ya generadas al importar): con 80 fotos
+    // el correo pesaría demasiado para mail(). `fotos` da el total real a recepción.
+    const notifyItems = fotos.slice(0, MAX_MINIATURAS_EMAIL).map(p => ({ thumbnail: p.thumb || p.dataUrl, copies: 1 }))
+    try {
+      await notifyRoomOrder({ hotel: hotelId, room: normalizeEventCode(eventCode), items: notifyItems, fotos: total, total: amountPaid ?? totalPrice(), paymentMethod })
     } catch (e) {
       console.error('notifyRoomOrder error:', e)
     }
@@ -636,6 +862,19 @@ export default function MobileApp() {
           {CAMARA_HABILITADA && <button className="btn btn-sm btn-outline-warning" title="Hacer foto" style={{fontSize:'18px',padding:'2px 6px'}} onClick={() => setStep(STEP_CAMERA)}><i className="bi bi-camera" /></button>}
           <button className="btn btn-sm btn-outline-warning" title="Términos" style={{fontSize:'18px',padding:'2px 6px'}} onClick={() => setShowTermsModal(true)}><i className="bi bi-info-circle" /></button>
         </div>
+        {fotosOmitidas.length > 0 && (
+          <div className="mobile-warning-box">
+            <button className="mobile-warning-close" onClick={() => setFotosOmitidas([])} aria-label="Cerrar">&times;</button>
+            <p className="mobile-warning-title"><i className="bi bi-exclamation-triangle-fill me-2" />{fotosOmitidas.length} foto{fotosOmitidas.length > 1 ? 's' : ''} en formato {resumenFormatos(fotosOmitidas)}</p>
+            <p className="mobile-warning-text">
+              Ese formato no se puede imprimir. Suele pasar con las fotos en <strong>RAW/DNG</strong>, las de <strong>modo profesional</strong> y los <strong>vídeos</strong>.
+            </p>
+            <p className="mobile-warning-text mt-1">
+              <strong>Solución:</strong> ábrelas en la app de Fotos de tu móvil, pulsa <strong>Editar</strong> y <strong>Guardar</strong>; quedan en un formato normal y ya se pueden subir.
+            </p>
+            <p className="mobile-warning-text mt-1">Las demás fotos siguen en el pedido y sólo pagarás las que ves aquí.</p>
+          </div>
+        )}
         {capturedPhotos.length === 0 ? (
           <div className="gallery-empty-state">
             <i className="bi bi-camera" />
@@ -649,7 +888,7 @@ export default function MobileApp() {
           <div className="gallery-grid">
             {capturedPhotos.map(photo => (
               <div key={photo.id} className="mobile-photo-card selected">
-                <img src={photo.dataUrl} alt="" draggable={false} onContextMenu={e=>e.preventDefault()} onDragStart={e=>e.preventDefault()} />
+                <img src={photo.thumb || photo.dataUrl} alt="" loading="lazy" decoding="async" draggable={false} onContextMenu={e=>e.preventDefault()} onDragStart={e=>e.preventDefault()} />
               </div>
             ))}
           </div>
@@ -668,8 +907,8 @@ export default function MobileApp() {
               <div className="terms-modal-body">
                 <p><strong>¿Cómo funciona?</strong></p>
                 <ol style={{paddingLeft:'1.1rem',margin:'0 0 12px'}}>
-                  <li>Pulsa <strong>Subir foto</strong> y elige las fotos de tu móvil.</li>
-                  <li>Elige cuántas <strong>copias</strong> quieres de cada una.</li>
+                  <li>Pulsa <strong>Subir foto</strong> y elige las fotos de tu móvil (hasta {MAX_FOTOS} por pedido).</li>
+                  <li>Se imprime <strong>una copia de cada foto</strong>, a {pricePerPhoto().toFixed(2)}&nbsp;€ la unidad.</li>
                   <li>Paga con <strong>tarjeta</strong> o <strong>PayPal</strong>.</li>
                   <li>Recoge tus fotos impresas en <strong>recepción</strong>.</li>
                 </ol>
@@ -689,6 +928,14 @@ export default function MobileApp() {
               </div>
               <div className="terms-modal-footer"><button className="btn btn-sm btn-secondary" onClick={()=>setShowTermsModal(false)}>Cerrar</button></div>
             </div>
+          </div>
+        )}
+        {importProgreso && (
+          <div className="mobile-busy-overlay">
+            <span className="spinner-border text-warning" style={{width:'2.5rem',height:'2.5rem'}} />
+            <p className="mobile-busy-title">Preparando tus fotos… {importProgreso.hechas}/{importProgreso.total}</p>
+            <p className="mobile-busy-text">No cierres esta pantalla.</p>
+            <button className="btn btn-sm btn-outline-light" onClick={() => { cancelarImportRef.current = true }}>Cancelar</button>
           </div>
         )}
         {toast && <div className="mobile-toast">{toast}</div>}
@@ -715,7 +962,7 @@ export default function MobileApp() {
               <div className="captured-thumbnails">
                 {capturedPhotos.map(p => (
                   <div key={p.id} className="captured-thumb-wrapper">
-                    <img src={p.dataUrl} alt="" className="captured-thumb" draggable={false} onContextMenu={e=>e.preventDefault()} onDragStart={e=>e.preventDefault()} />
+                    <img src={p.thumb || p.dataUrl} alt="" className="captured-thumb" loading="lazy" decoding="async" draggable={false} onContextMenu={e=>e.preventDefault()} onDragStart={e=>e.preventDefault()} />
                     <button className="btn btn-sm btn-danger captured-remove-btn" onClick={() => removeCaptured(p.id)}><i className="bi bi-x" /></button>
                   </div>
                 ))}
@@ -746,15 +993,11 @@ export default function MobileApp() {
         <div className="order-summary-container">
           {capturedPhotos.map(photo => (
             <div key={photo.id} className="order-photo-item">
-              <img src={photo.dataUrl} alt="" className="order-photo-thumb" draggable={false} onContextMenu={e=>e.preventDefault()} onDragStart={e=>e.preventDefault()} />
+              <img src={photo.thumb || photo.dataUrl} alt="" className="order-photo-thumb" loading="lazy" decoding="async" draggable={false} onContextMenu={e=>e.preventDefault()} onDragStart={e=>e.preventDefault()} />
               <div className="order-photo-info">
                 <div className="order-photo-label">Tu foto</div>
                 <div className="order-copies-selector">
-                  <span className="order-copies-label">Copias:</span>
-                  {[1,2,3].map(n => (
-                    <button key={n} className={`btn btn-sm order-copies-btn ${photo.copies === n ? 'order-copies-btn-active' : 'order-copies-btn-inactive'}`} onClick={() => updateCapturedCopies(photo.id, n)}>{n}</button>
-                  ))}
-                  <span className="order-price">{priceForPhoto(photo.copies).toFixed(2)}€</span>
+                  <span className="order-price">{pricePerPhoto().toFixed(2)}€</span>
                 </div>
               </div>
               <button className="btn btn-sm btn-outline-danger order-delete-btn" onClick={() => removeCaptured(photo.id)}><i className="bi bi-trash" /></button>
@@ -813,7 +1056,7 @@ export default function MobileApp() {
                   <p className="fw-bold mt-2 mb-1">No tienes que pagar nada</p>
                   <p className="text-muted mb-3" style={{ fontSize: 14 }}>Tu cupón cubre el pedido completo.</p>
                   {squareError && <div className="text-danger mb-2">{squareError}</div>}
-                  <button className="btn btn-warning w-100 fw-bold payment-btn" onClick={handleFreeOrder} disabled={squareLoading || totalCopies === 0}>
+                  <button className="btn btn-warning w-100 fw-bold payment-btn" onClick={handleFreeOrder} disabled={squareLoading || capturedPhotos.length === 0}>
                     {squareLoading ? <><span className="spinner-border spinner-border-sm me-2" />Enviando…</> : <><i className="bi bi-send me-2" />Enviar pedido</>}
                   </button>
                 </div>
@@ -839,7 +1082,7 @@ export default function MobileApp() {
                     <div className="payment-method-content">
                       <div id="card-container" style={{ minHeight: '150px' }}></div>
                       {squareError && <div className="text-danger text-center mt-2">{squareError}</div>}
-                      <button className="btn btn-warning w-100 mt-3 fw-bold payment-btn" onClick={handleSquarePayment} disabled={squareLoading || !squareCard || totalCopies === 0}>
+                      <button className="btn btn-warning w-100 mt-3 fw-bold payment-btn" onClick={handleSquarePayment} disabled={squareLoading || !squareCard || capturedPhotos.length === 0}>
                         {squareLoading ? <><span className="spinner-border spinner-border-sm me-2" />Procesando…</> : `Pagar ${finalPrice}€`}
                       </button>
                       <p className="pay-method-note"><i className="bi bi-shield-lock me-1" />Visa · Mastercard · American Express</p>
@@ -865,6 +1108,13 @@ export default function MobileApp() {
             </div>
           )}
         </div>
+        {envioProgreso && (
+          <div className="mobile-busy-overlay">
+            <span className="spinner-border text-warning" style={{width:'2.5rem',height:'2.5rem'}} />
+            <p className="mobile-busy-title">Enviando tus fotos… {envioProgreso.hechas}/{envioProgreso.total}</p>
+            <p className="mobile-busy-text">No cierres esta pantalla.</p>
+          </div>
+        )}
         {toast && <div className="mobile-toast">{toast}</div>}
       </div>
     )

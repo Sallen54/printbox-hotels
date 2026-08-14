@@ -197,15 +197,15 @@ printbox-hotels/
 ### 6.1 App Móvil (huésped) — `/mobile?habitacion=XXXX`
 
 1. El huésped escanea el QR de su habitación (o recibe la URL) → entra directo a la galería, sin escribir ningún código.
-2. Pulsa **Subir foto**, que abre el selector nativo del móvil (desde ahí puede elegir una foto guardada o hacer una en el momento). El botón de cámara propio está desactivado (`CAMARA_HABILITADA = false`), aunque su código se conserva.
-3. "Ver pedido" → elige copias por foto (1/2/3) y ve el precio.
+2. Pulsa **Subir foto**, que abre el selector nativo del móvil (desde ahí puede elegir una foto guardada o hacer una en el momento). El botón de cámara propio está desactivado (`CAMARA_HABILITADA = false`), aunque su código se conserva. **La foto se sube al original, sin redimensionar**, para no perder calidad de impresión; sólo se genera una miniatura para la pantalla y el e-mail.
+3. "Ver pedido" → ve el desglose: **una copia de cada foto** al precio unitario del hotel (por defecto 1,20 €). El selector de copias se retiró; el tope por pedido son **80 fotos** (`MAX_FOTOS` en [src/mobile/MobileApp.jsx](src/mobile/MobileApp.jsx)).
 4. Elige método (**Tarjeta** o **PayPal**) y paga. Si aplica un cupón que cubre el total, no se muestra pasarela: solo un botón de **Enviar pedido**.
 5. Al completar el envío, **recepción recibe automáticamente el e-mail** con miniaturas + copias + resumen del pago (ver sección 7).
 6. Las fotos quedan pendientes de imprimir en el Monitor/Printer de recepción.
 
 ### 6.2 Monitor / Admin — `/viewer`
 
-Pantalla para recepción: introduce el número de habitación, ve la galería, imprime fotos manualmente, y desde **Configuración** (contraseña) ajusta precios, empresa y **el e-mail de recepción** para esa habitación.
+Pantalla para recepción: elige la habitación y ve la galería de fotos que suben los huéspedes (al pulsar una se abre a pantalla grande). **Solo visor: no imprime ni cobra** — de eso se encarga el móvil del huésped. Desde **Configuración** (contraseña) ajusta precio, empresa y **el e-mail de recepción** del hotel, y genera cupones.
 
 ### 6.3 Printer — `/printer`
 
@@ -218,11 +218,12 @@ Igual que en Adventures: hace polling de las fotos marcadas para imprimir, gener
 **Cada vez que una habitación envía fotos** (tras el pago, o tras un cupón de pago completo), se dispara **una sola llamada** a `POST /printbox/notify-order` con:
 
 ```json
-{ "room": "1204", "items": [{ "thumbnail": "data:image/jpeg;base64,...", "copies": 2 }], "total": "9.00", "paymentMethod": "Tarjeta (Square)" }
+{ "room": "1204", "items": [{ "thumbnail": "data:image/jpeg;base64,...", "copies": 1 }], "total": "2.40", "paymentMethod": "Tarjeta (Square)" }
 ```
 
 - El thumbnail se genera **en el propio móvil**, a partir de la foto que ya se está enviando (no se pide nada a ninguna API externa).
-- Un pedido con una foto a 3 copias genera **una fila** en el email (no 3 envíos).
+- Cada foto va con `copies: 1`; el pedido viaja al servidor como lista de copias porque la validación del importe (`pbhCheckAmountCents`) sigue recalculando con esa tabla.
+- En un pedido grande el e-mail lleva **sólo las 12 primeras miniaturas** + el total real (`fotos`), y resume el resto con "y N fotos más". Con 80 miniaturas el correo no pasaría por `mail()`.
 
 ### En producción (IONOS / `proxy.php`)
 Lee el e-mail de recepción del hotel (`email_recepcion` en `config/hotels/<id>/textos.txt` — único por hotel, vale para todas sus habitaciones) y envía un email HTML con las miniaturas embebidas inline (MIME `multipart/related`, sin librerías externas) usando **`mail()` nativo de PHP** — elegido deliberadamente como la opción más simple, sin SMTP ni PHPMailer. El hotel se resuelve por el `?hotel=<id>` que el móvil añade desde el QR (el aviso lo dispara siempre el huésped, sin sesión).

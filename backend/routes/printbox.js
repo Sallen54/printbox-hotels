@@ -186,9 +186,11 @@ router.post('/photo-send', async (req, res) => {
 // así que aquí solo se deja constancia en consola. Igual que la cámara (solo funciona en
 // HTTPS de producción), es una limitación conocida y documentada del entorno de desarrollo.
 router.post('/notify-order', async (req, res) => {
-  const { room, items = [], total, paymentMethod } = req.body
-  console.log(`[notify-order] Habitación ${room} envió ${items.length} foto(s) — total ${total}€ (${paymentMethod}). ` +
-    `Copias: ${items.map(i => i.copies).join(', ')}. [DEV] No se envía e-mail real, solo se loguea.`)
+  const { room, items = [], fotos, total, paymentMethod } = req.body
+  // `items` puede traer solo las primeras miniaturas de un pedido grande; `fotos` es el total.
+  const numFotos = Math.max(items.length, Number(fotos) || 0)
+  console.log(`[notify-order] Habitación ${room} envió ${numFotos} foto(s) — total ${total}€ (${paymentMethod}). ` +
+    `Miniaturas en el aviso: ${items.length}. [DEV] No se envía e-mail real, solo se loguea.`)
   res.json({ ok: true, devStub: true })
 })
 
