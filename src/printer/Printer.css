@@ -391,11 +391,6 @@
   color: #dc3545;
 }
 
-/* ========== UTILIDADES ========== */
-.bg-darker {
-  background: var(--pb-bg) !important;
-}
-
 /* ========== RESPONSIVE ========== */
 @media (max-width: 768px) {
   .controls-container {

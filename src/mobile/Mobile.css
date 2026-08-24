@@ -112,13 +112,6 @@ body:has(.camera-container) {
   border-bottom-color: rgba(201, 162, 75, 0.4);
 }
 
-.mobile-header-logo {
-  width: 32px;
-  border-radius: 50%;
-  border: 1px solid var(--mv-gold);
-  background: var(--mv-card);
-}
-
 .mobile-header-ic-launcher-large {
   height: 45px;
   width: auto;
@@ -154,22 +147,12 @@ body:has(.camera-container) {
   white-space: nowrap;
 }
 
-.mobile-header-subtitle {
-  font-size: 11px;
-  color: var(--mv-text-muted);
-  margin-top: 2px;
-}
-
 .mobile-header-ic-launcher {
   height: 18px;
   width: auto;
   margin: 0 6px;
   vertical-align: middle;
   border-radius: 3px;
-}
-
-.mobile-header-edit {
-  font-size: 11px;
 }
 
 /* ========== PANTALLA DE EVENTO (entrada) ========== */
@@ -357,16 +340,6 @@ body:has(.camera-container) {
   gap: 14px;
   padding: 1rem;
   padding-bottom: 120px;
-}
-
-.camera-button {
-  margin-bottom: 0.75rem;
-  padding: 0 1rem;
-}
-
-.camera-button .btn {
-  width: 100%;
-  font-weight: 600;
 }
 
 /* ========== BARRA FLOTANTE DE PEDIDO ========== */
@@ -582,18 +555,6 @@ body:has(.camera-container) {
   border: none !important;
 }
 
-.order-footer {
-  padding: 0 1rem 1rem 1rem;
-  border-top: 1px solid rgba(176, 138, 53, 0.25);
-  padding-top: 0.5rem;
-}
-
-.order-confirm-btn {
-  font-size: 16px;
-  font-weight: 600;
-  width: 100%;
-}
-
 /* ========== PANTALLA DE ÉXITO ========== */
 .success-container {
   min-height: 100dvh;
@@ -653,47 +614,6 @@ body:has(.camera-container) {
   color: var(--mv-text-muted);
 }
 
-/* ========== STEP INDICATOR ========== */
-.step-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: rgba(176, 138, 53, 0.25);
-  transition: background 0.2s;
-}
-
-.step-dot.active {
-  background: var(--mv-gold);
-}
-
-.step-dot.done {
-  background: #4a7c4a;
-}
-
-.step-number {
-  width: 24px;
-  height: 24px;
-  border-radius: 50%;
-  background: rgba(176, 138, 53, 0.2);
-  color: var(--mv-text-dark);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-weight: bold;
-  font-size: 12px;
-  transition: background 0.2s, color 0.2s;
-}
-
-.step-number.active {
-  background: var(--mv-gold);
-  color: #fffdf7;
-}
-
-.step-number.done {
-  background: #4a7c4a;
-  color: #fff;
-}
-
 /* ========== TOAST ========== */
 .mobile-toast {
   position: fixed;
@@ -730,28 +650,10 @@ body:has(.camera-container) {
   }
 }
 
-/* ========== UTILIDADES ========== */
-.mobile-gallery-grid {
-  padding-bottom: 120px;
-}
-
 /* ========== MÉTODOS DE PAGO ========== */
 .payment-methods-section {
   margin-top: 20px;
   padding: 0;
-}
-
-.payment-title {
-  font-family: 'Marcellus', serif;
-  color: var(--mv-text-dark);
-  font-size: 18px;
-  font-weight: 400;
-  margin-bottom: 16px;
-  text-align: center;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
 }
 
 /* Selector de método de pago: se muestra solo el formulario elegido, para no tener a la

@@ -6,13 +6,15 @@ PBAcount.txt
 *.log
 config/paypal.json
 
-# Cosas de Claude y auditorías internas: nunca al repo
+# Cosas de Claude y notas internas: nunca al repo
 .claude/
 AUDITORIA_*.md
+CLAUDE.md
+CURRENT_STATUS.md
 
-# Secretos y datos reales de los hoteles (se generan con scripts/add-hotel.js y se
-# suben por FTP; nunca al repo): cuentas con hash bcrypt, secreto de sesión HMAC y
-# la config/logos de cada hotel.
+# Secretos y datos reales de los hoteles (se gestionan con scripts/add-hotel.js o a
+# mano, y se suben por FTP; nunca al repo). Ojo con hotels.xml: guarda las
+# contraseñas de todos los hoteles EN CLARO.
 config/hotels.json
 config/hotels.xml
 config/session_secret.txt

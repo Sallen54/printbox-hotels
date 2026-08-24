@@ -192,10 +192,16 @@ function getSessionHotelId($base) {
     return pbhVerifyToken($_COOKIE[PBH_COOKIE] ?? '', $base);
 }
 
-// Cuentas de los hoteles. Formato oficial: config/hotels.xml (un solo fichero con todos).
-// Se mantiene la lectura de hotels.json para no romper despliegues que aún no han migrado.
-//   <hoteles><hotel id="vf"><nombre>..</nombre><usuario>..</usuario><passHash>..</passHash></hotel></hoteles>
-// Devuelve [ hotelId => ['nombre'=>, 'user'=>, 'passHash'=>] ].
+// Cuentas de los hoteles. Formato oficial: config/hotels.xml (un solo fichero con todos),
+// pensado para poder editarlo a mano (Bloc de notas, Excel) sin pasar por la consola:
+//   <hoteles><hotel id="vf"><nombre>..</nombre><usuario>..</usuario><pass>..</pass></hotel></hoteles>
+//
+// <pass> es la contraseña TAL CUAL, legible. Es una decisión consciente para que dar de alta
+// un hotel sea escribir una línea. Lo que la protege es que config/ no se sirve nunca por
+// HTTP (config/.htaccess) — quien tenga acceso al FTP ve todas las contraseñas.
+// Se admite también <passHash> (bcrypt) para las cuentas creadas antes de este cambio, y se
+// sigue leyendo hotels.json como respaldo de despliegues sin migrar.
+// Devuelve [ hotelId => ['nombre'=>, 'user'=>, 'pass'=>, 'passHash'=>] ].
 function readHotelsAccounts($base) {
     $xmlFile = $base . '/hotels.xml';
     if (is_file($xmlFile)) {
@@ -211,6 +217,7 @@ function readHotelsAccounts($base) {
                 $accounts[$id] = [
                     'nombre'   => trim((string) $h->nombre),
                     'user'     => trim((string) $h->usuario),
+                    'pass'     => (string) $h->pass,
                     'passHash' => trim((string) $h->passHash),
                 ];
             }
@@ -719,7 +726,7 @@ if ($uri === '/health') {
     exit();
 }
 
-// ── /auth/* (login por hotel; cuentas en config/hotels.json creadas por Printbox) ──
+// ── /auth/* (login por hotel; cuentas en config/hotels.xml creadas por Printbox) ──
 if ($uri === '/auth/login' && $_SERVER['REQUEST_METHOD'] === 'POST') {
     $base = getConfigDir();
     $user = trim((string)($data['user'] ?? ''));
@@ -741,7 +748,15 @@ if ($uri === '/auth/login' && $_SERVER['REQUEST_METHOD'] === 'POST') {
     $hotels = readHotelsAccounts($base);
     $foundId = null; $foundNombre = '';
     foreach ($hotels as $hid => $h) {
-        if (($h['user'] ?? '') === $user && !empty($h['passHash']) && password_verify($password, $h['passHash'])) {
+        if (($h['user'] ?? '') !== $user) continue;
+        // <pass> (legible) manda sobre <passHash> (cuentas antiguas). hash_equals compara en
+        // tiempo constante: sin él, el tiempo de respuesta delataría cuántos caracteres se
+        // han acertado. Misma comprobación que hace password_verify por dentro.
+        $enClaro = trim((string)($h['pass'] ?? ''));
+        $correcta = $enClaro !== ''
+            ? hash_equals($enClaro, $password)
+            : (!empty($h['passHash']) && password_verify($password, $h['passHash']));
+        if ($correcta) {
             $foundId = $hid; $foundNombre = $h['nombre'] ?? ''; break;
         }
     }

@@ -217,12 +217,12 @@
 }
 
 /* ========== MODAL IMPRESIÓN — ahora claro ========== */
-.print-modal-overlay {
+.photo-modal-overlay {
   background: rgba(32, 26, 16, 0.6);
   backdrop-filter: blur(5px);
 }
 
-.print-modal .modal-content {
+.photo-modal .modal-content {
   background-color: var(--vw-card, #fffdf7);
   border: none;
   border-radius: 1rem;
@@ -230,7 +230,7 @@
   color: var(--vw-text-dark, #2b2013);
 }
 
-.print-modal-header {
+.photo-modal-header {
   border-bottom-color: rgba(176, 138, 53, 0.25);
   justify-content: center;
   padding: 0.6rem;
@@ -238,14 +238,14 @@
   font-family: 'Marcellus', serif;
 }
 
-.print-modal-close {
+.photo-modal-close {
   position: absolute;
   right: 1rem;
   top: 50%;
   transform: translateY(-50%);
 }
 
-.print-modal-body {
+.photo-modal-body {
   padding: 0;
 }
 

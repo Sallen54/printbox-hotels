@@ -6,8 +6,6 @@ import './Viewer.css'
 
 window.isViewer = true
 
-const BACKEND = window.electronAPI?.backendUrl || (window.location.hostname === 'localhost' ? 'http://localhost:4000' : '/')
-
 const defaultPrivacyContent = `
 <div style="text-align:center;"><h4><b> Condiciones y políticas de uso </b></h4><br></div>
 <div style="text-align:justify;"><p> La Aplicación Printbox Hotels está desarrollada, diseñada y publicada por Jorge Marí Grimalt y domicilio C/Patricio Ferrandiz 3 Bjo C Incomar en Dénia, Alicante. Las condiciones de servicio y uso (las "Condiciones de Uso") rigen el acceso a la aplicación móvil Printbox Hotels así como el uso del Sitio y de los servicios que usted (el "Usuario") realice. </p><p> Para consultar nuestras políticas de privacidad, acceda en el siguiente enlace: </p></div>
@@ -432,12 +430,11 @@ export default function ViewerApp() {
     }
   }, uuid ? 20000 : null)
 
-  // El Monitor no cobra: el precio solo se muestra en el pie, leído de textos.precio1.
-  // La validación/canje de cupones vive en el móvil (allí es donde se paga); aquí solo se
-  // GENERAN para dárselos al huésped (ver ADMIN CUPONES).
   function handleSelectPhoto(photo) { setSelectedPhoto(photo) }
 
-  // ── ADMIN CUPONES ──
+  // ── CUPONES (admin) ──
+  // Aquí solo se GENERAN, para dárselos al huésped. Validarlos y canjearlos es cosa del
+  // móvil, que es donde se paga.
   const handleGenerateCoupon = async () => {
     const euros = parseFloat(couponGenAmount)
     if (!euros || euros <= 0) { setCouponGenError('Importe inválido'); return }
@@ -661,7 +658,7 @@ export default function ViewerApp() {
                       {!advancedUnlocked && <div className="form-text text-secondary mt-2">Estos ajustes los cambia Printbox. Pulsa <b>Desbloquear</b> e introduce la contraseña.</div>}
                     </div>
                   </div>
-                  <div className="col-md-12"><label className="form-label text-light">Email de Recepción</label><input type="email" placeholder="recepcion@tuhotel.com" className="form-control bg-black border-secondary text-light" value={adminEmailRecepcion} onChange={e => setAdminEmailRecepcion(e.target.value)} /><div className="form-text text-secondary">Vale para todo el hotel: a esta dirección se enviará un aviso con miniaturas y copias cada vez que cualquier habitación envíe fotos. Los precios también son únicos para todas las habitaciones.</div></div>
+                  <div className="col-md-12"><label className="form-label text-light">Email de Recepción</label><input type="email" placeholder="recepcion@tuhotel.com" className="form-control bg-black border-secondary text-light" value={adminEmailRecepcion} onChange={e => setAdminEmailRecepcion(e.target.value)} /><div className="form-text text-secondary">Vale para todo el hotel: a esta dirección llega un aviso con las miniaturas cada vez que cualquier habitación envía fotos. El precio también es único para todas las habitaciones.</div></div>
                   <div className="col-md-12">
                     <div className="bg-black border border-secondary rounded-3 p-3">
                       <div className="form-check form-switch">
@@ -678,6 +675,13 @@ export default function ViewerApp() {
                   </div>
                 </div>
               </div>
+              {/* Resultado del guardado: sin esto, un código de habitación duplicado o un
+                  error del servidor se quedaban en silencio y parecía que no pasaba nada. */}
+              {adminError && (
+                <div className={`alert ${adminError.startsWith('✓') ? 'alert-success' : 'alert-danger'} m-3 mb-0 py-2`}>
+                  {adminError}
+                </div>
+              )}
               <div className="modal-footer border-secondary">
                 <button type="button" className="btn btn-outline-success me-auto" onClick={() => { setShowAdminConfig(false); setShowCouponPanel(true); loadCouponList() }}><i className="bi bi-ticket-perforated me-1" />Cupones</button>
                 <button type="button" className="btn btn-secondary" onClick={() => setShowAdminConfig(false)} disabled={adminSaving}>Cancelar</button>
@@ -762,14 +766,14 @@ export default function ViewerApp() {
 
       {/* VISOR DE FOTO. Solo mirar: recepción no cobra ni imprime desde el Monitor. */}
       {selectedPhoto && (
-        <div className="modal d-block print-modal-overlay" tabIndex="-1" onClick={() => setSelectedPhoto(null)}>
+        <div className="modal d-block photo-modal-overlay" tabIndex="-1" onClick={() => setSelectedPhoto(null)}>
           <div className="modal-dialog modal-dialog-centered modal-xl modal-fullscreen-sm-down" onClick={e => e.stopPropagation()}>
-            <div className="modal-content bg-dark border border-secondary print-modal">
-              <div className="print-modal-header">
+            <div className="modal-content bg-dark border border-secondary photo-modal">
+              <div className="photo-modal-header">
                 <span className="text-light fw-bold font-mono"><i className="bi bi-image me-2 text-warning" />{currentRoomLabel}</span>
-                <button className="btn-close btn-close-white print-modal-close" onClick={() => setSelectedPhoto(null)} />
+                <button className="btn-close btn-close-white photo-modal-close" onClick={() => setSelectedPhoto(null)} />
               </div>
-              <div className="print-modal-body">
+              <div className="photo-modal-body">
                 <div className="photo-viewer-container">
                   <img src={fixImageUrl(selectedPhoto.uri_full || selectedPhoto.uri)} alt="Foto" className="photo-viewer-image" draggable={false} onContextMenu={e=>e.preventDefault()} onDragStart={e=>e.preventDefault()} />
                 </div>

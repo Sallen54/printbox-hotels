@@ -56,9 +56,7 @@ async function resizeImage(src, maxSize = 1200, timeoutMs = 15000) {
   return img ? miniaturaDe(img, maxSize) : null
 }
 
-// Formato legible de un fichero, para poder decirle al huésped QUÉ falla (un nombre como
-// IMG_4471 no le dice nada; "DNG" sí, y además es lo que hay que explicarle).
-// "DNG", "DNG y HEIC", "DNG, HEIC y 2 más" — agrupado, no una lista de nombres.
+// "DNG", "DNG y HEIC", "DNG, HEIC y 2 más": los formatos que han fallado, agrupados.
 function resumenFormatos(formatos) {
   const unicos = [...new Set(formatos)]
   if (unicos.length === 1) return unicos[0]
@@ -66,6 +64,8 @@ function resumenFormatos(formatos) {
   return `${unicos.slice(0, 2).join(', ')} y ${unicos.length - 2} más`
 }
 
+// Formato legible de un fichero, para decirle al huésped QUÉ ha fallado: un nombre como
+// IMG_4471 no le dice nada, pero "DNG" sí, y es lo que hay que explicarle.
 function formatoDe(file) {
   const ext = (file?.name || '').split('.').pop()
   if (ext && ext.length <= 5 && /^[a-z0-9]+$/i.test(ext)) return ext.toUpperCase()
@@ -95,43 +95,25 @@ const STEP_SUCCESS = 'success'
 // STEP_CAMERA se conserva entero: poner esto a true lo reactiva.
 const CAMARA_HABILITADA = false
 
-// Tope de fotos por pedido. Un pedido grande es un caso real (fotos de las vacaciones),
-// así que el límite alto va acompañado de: miniaturas para pintar la galería (si se
-// pintaran las de 1400px el móvil se queda sin memoria), envío en paralelo con reintento
-// y sólo las primeras miniaturas en el e-mail a recepción.
-const MAX_FOTOS = 80
+// ── TRATAMIENTO DE LAS FOTOS ──
+// Regla de oro: la foto que se imprime se sube ORIGINAL, sin redimensionar ni recodificar,
+// igual que la app Flutter. Todo lo de abajo existe para que un pedido de 80 originales no
+// se quede sin memoria en el móvil ni tarde una eternidad en subir.
+const MAX_FOTOS = 80                                // tope de fotos por pedido
+const THUMB_SIZE = 320                              // miniatura: interfaz y e-mail a recepción
+const ANCHO_MONITOR = 1600                          // copia para el Monitor, que sólo se mira
+const CONCURRENCIA_ENVIO = 2                        // fotos en vuelo (manda el ancho de banda)
+const MAX_MINIATURAS_EMAIL = 12                     // el resto se resume: "y N fotos más"
+const FORMATOS_DIRECTOS = /^image\/(jpe?g|png)$/i   // HEIC, WEBP… se pasan a JPEG al subir
 
-// Miniatura para la interfaz y el e-mail. La foto que se imprime NO se toca: se sube el
-// original tal cual, igual que la app Flutter, para no perder calidad de impresión.
-const THUMB_SIZE = 320
-
-// Red de seguridad al subir: si el base64 del original supera esto (≈ 9 MB, o sea una foto
-// de más de ~6,5 MB), se sube una versión de 2400px. No es por calidad —2400px cubre 15x20
-// a 300 ppp— sino porque un POST así de grande lo rechazan tanto PHP (post_max_size) como
-// los límites del hosting, y el pedido YA está pagado cuando se sube.
+// Red de seguridad: por encima de ~9 MB en base64, el POST lo rechaza PHP (post_max_size)
+// y el pedido YA está pagado, así que esas fotos se suben a 2400px (cubre 15x20 a 300 ppp).
 const LIMITE_SUBIDA_CHARS = 9000000
 const ANCHO_MAXIMO_SEGURO = 2400
 
-// Copia que se manda al evento de la habitación para que recepción vea la foto en el
-// Monitor. Ahí sólo se mira (no se imprime ni se cobra), así que no hace falta el original.
-const ANCHO_MONITOR = 1600
-
-// Formatos que se suben tal cual. Cualquier otro (HEIC de iPhone, WEBP…) se recodifica a
-// JPEG manteniendo la resolución, porque la impresión no los procesa.
-const FORMATOS_DIRECTOS = /^image\/(jpe?g|png)$/i
-
-// Fotos que se envían a la vez al backend. Se sube el original (varios MB cada una), así
-// que el cuello de botella es la subida, no la latencia: con 2 en vuelo se aprovecha el
-// ancho de banda sin tener media docena de fotos enteras en memoria a la vez.
-const CONCURRENCIA_ENVIO = 2
-
-// Miniaturas que se incrustan en el e-mail de recepción. Con 80 el correo pesaría ~2 MB y
-// mail() de IONOS lo rechazaría; el resto se resume con "y N fotos más".
-const MAX_MINIATURAS_EMAIL = 12
-
-// Las fotos NO se guardan en localStorage: ahora el pedido son ficheros del móvil (no
-// serializables) y, aunque lo fueran, 80 originales desbordarían de largo la cuota (~5 MB).
-// Se guarda el resto del estado; al recargar, el huésped vuelve a elegir las fotos.
+// Precio por foto mientras no responda el servidor. precio2/precio3 son múltiplos y solo
+// existen para que la tabla del servidor siga cuadrando: el móvil vende una copia por foto.
+const PRECIOS_DEFECTO = { precio1: '1.20', precio2: '2.40', precio3: '3.60' }
 
 // ── CONSTANTES DE SQUARE ──
 const SQUARE_APP_ID = 'sq0idp-OV9y595m1kR_UU3QRest7Q'
@@ -160,21 +142,20 @@ export default function MobileApp() {
   const [printerUuid, setPrinterUuid] = useState(null)
   const lastPrinterCodeRef = useRef(null)
 
-  // --- Estados de cámara ---
+  // --- Estados de cámara (solo con CAMARA_HABILITADA) ---
   const videoRef = useRef(null)
   const canvasRef = useRef(null)
   const streamRef = useRef(null)
   const [facingMode, setFacingMode] = useState('environment')
-  const [capturedPhotos, setCapturedPhotos] = useState([])
-  // Progreso de la importación desde la galería: {hechas, total}. Redimensionar 80 fotos
-  // lleva su tiempo y sin esto parece que el móvil se ha quedado colgado.
-  const [importProgreso, setImportProgreso] = useState(null)
-  // Progreso del envío al backend: {hechas, total}. Un pedido grande tarda, y sin esto
-  // el huésped ve la pantalla congelada después de haber pagado.
-  const [envioProgreso, setEnvioProgreso] = useState(null)
 
-  // --- Subida de fotos ya guardadas en el móvil (galería del dispositivo) ---
+  // --- Fotos del pedido ---
+  // Cada foto es { file, thumb, orientation, id } — o { dataUrl, ... } si viene de la cámara.
+  const [capturedPhotos, setCapturedPhotos] = useState([])
   const galleryFileInputRef = useRef(null)
+  // Progreso {hechas, total} de las dos partes lentas. Sin ellos el móvil parece colgado:
+  // la importación decodifica 80 fotos y el envío ocurre con el pedido ya pagado.
+  const [importProgreso, setImportProgreso] = useState(null)
+  const [envioProgreso, setEnvioProgreso] = useState(null)
   // Permite abortar una importación larga sin cerrar la app (ref y no estado: se consulta
   // dentro del bucle, que no ve los cambios de estado).
   const cancelarImportRef = useRef(false)
@@ -221,9 +202,9 @@ export default function MobileApp() {
   const applyTextos = (incoming) => {
     if (!incoming) return
     setTextos(prev => ({
-      precio1: (incoming.precio1?.trim()) || prev?.precio1 || '1.20',
-      precio2: (incoming.precio2?.trim()) || prev?.precio2 || '2.40',
-      precio3: (incoming.precio3?.trim()) || prev?.precio3 || '3.60',
+      precio1: (incoming.precio1?.trim()) || prev?.precio1 || PRECIOS_DEFECTO.precio1,
+      precio2: (incoming.precio2?.trim()) || prev?.precio2 || PRECIOS_DEFECTO.precio2,
+      precio3: (incoming.precio3?.trim()) || prev?.precio3 || PRECIOS_DEFECTO.precio3,
       text_es: incoming.text_es || prev?.text_es || '',
       text_en: incoming.text_en || prev?.text_en || '',
       text_fr: incoming.text_fr || prev?.text_fr || '',
@@ -233,9 +214,8 @@ export default function MobileApp() {
   }
 
   // ── LOCALSTORAGE ──
-  // Las fotos van en base64 y son lo único que puede desbordar la cuota del navegador.
-  // Si no caben se guarda el resto del estado (habitación, paso, textos) sin ellas: es
-  // preferible que el huésped tenga que volver a elegirlas a que falle el guardado entero.
+  // Solo la habitación, el paso y los textos. Las fotos NO: ahora el pedido son ficheros del
+  // móvil (no serializables) y 80 originales desbordarían de largo la cuota (~5 MB).
   const saveToLocalStorage = () => {
     try {
       localStorage.setItem('printbox_mobile_state', JSON.stringify({ hotelId, eventCode, step, uuid, textos }))
@@ -317,9 +297,11 @@ export default function MobileApp() {
     }).catch(() => {})
   }, [])
 
+  // Sin `capturedPhotos` en las dependencias: las fotos ya no se guardan, así que reescribir
+  // al añadir cada una de las 80 sería trabajo tirado.
   useEffect(() => {
     saveToLocalStorage()
-  }, [hotelId, eventCode, step, capturedPhotos, uuid])
+  }, [hotelId, eventCode, step, uuid])
 
   // Refrescar precios y evento impresora cada 5s (config del hotel del QR)
   useEffect(() => {
@@ -582,8 +564,8 @@ export default function MobileApp() {
     const files = seleccionadas.slice(0, hueco)
     const descartadas = seleccionadas.length - files.length
 
-    // Se procesan todas y se añaden de una vez: un setState por foto dispararía el
-    // guardado en localStorage (y un re-render con todas las imágenes) en cada vuelta.
+    // Se añaden todas de una vez al final: un setState por foto repintaría la galería
+    // entera en cada vuelta del bucle.
     setImportProgreso({ hechas: 0, total: files.length })
     cancelarImportRef.current = false
     setFotosOmitidas([])
@@ -629,12 +611,14 @@ export default function MobileApp() {
       setImportProgreso(null)
     }
 
-    // Las omitidas NO se avisan con un toast: se queda el aviso fijo en la galería, que
-    // se puede leer con calma (y cerrar), en vez de desaparecer a los segundos.
-    if (cancelada) showToast(`Importación cancelada · ${nuevas.length} foto(s) añadidas`, 4000)
-    else if (omitidas.length) { /* lo cuenta el aviso fijo */ }
-    else if (descartadas > 0) showToast(`Solo caben ${MAX_FOTOS} fotos por pedido: se han añadido ${files.length}`)
-    else showToast(`${files.length} foto${files.length > 1 ? 's' : ''} añadida${files.length > 1 ? 's' : ''} al pedido`)
+    // Las fotos omitidas no llevan toast: salen en el aviso fijo de la galería, que se
+    // puede leer con calma en vez de desaparecer a los segundos.
+    if (cancelada) {
+      showToast(`Importación cancelada · ${nuevas.length} foto(s) añadidas`, 4000)
+    } else if (!omitidas.length) {
+      if (descartadas > 0) showToast(`Solo caben ${MAX_FOTOS} fotos por pedido: se han añadido ${files.length}`)
+      else showToast(`${files.length} foto${files.length > 1 ? 's' : ''} añadida${files.length > 1 ? 's' : ''} al pedido`)
+    }
   }
 
   // ── PEDIDO Y PAGO ──
@@ -646,7 +630,7 @@ export default function MobileApp() {
   }
   // Precio único por foto: una copia de cada una. El servidor lo recalcula con la misma
   // tabla, por eso el pedido sigue viajando como una lista de copias (todas a 1).
-  const pricePerPhoto = () => priceOr(textos.precio1, 1.20)
+  const pricePerPhoto = () => priceOr(textos.precio1, parseFloat(PRECIOS_DEFECTO.precio1))
   const totalPrice = () => (capturedPhotos.length * pricePerPhoto()).toFixed(2)
 
   // Un cupón 'discount' resta su importe; uno 'full' cubre el pedido entero cuando su

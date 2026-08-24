@@ -27,6 +27,23 @@ const HOTELS_XML = path.join(CONFIG_DIR, 'hotels.xml')
 const HOTELS_JSON = path.join(CONFIG_DIR, 'hotels.json') // formato antiguo, solo lectura
 const HOTELS_DIR = path.join(CONFIG_DIR, 'hotels')
 
+// Cabecera del XML: quien lo abra tiene que entender qué es y qué no debe hacer con él.
+const CABECERA_XML = `<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Cuentas de acceso al Monitor: una por hotel.
+
+  Para dar de alta un hotel, copia un bloque <hotel> y cambia el id (sin espacios ni
+  acentos), el nombre, el usuario y la contraseña. Guarda el fichero como XML.
+
+  <pass> es la contraseña tal cual se teclea al entrar.
+  <passHash> aparece en cuentas antiguas; si un hotel tiene las dos, manda <pass>.
+
+  ATENCIÓN: aquí están las contraseñas de todos los hoteles. La web nunca sirve este
+  fichero (lo impide config/.htaccess), pero no lo compartas ni lo subas a ningún sitio.
+-->
+`
+
+
 // Ficheros de config que son por-hotel (los que hoy viven en config/ global)
 const HOTEL_FILES = ['servidor_api.txt', 'textos.txt', 'habitaciones.json', 'hotel-logo.png', 'paypal.json']
 
@@ -87,7 +104,8 @@ function readHotels() {
       }
       for (const m of xml.matchAll(/<hotel\s+id="([^"]+)"\s*>([\s\S]*?)<\/hotel>/g)) {
         hotels[xmlUnescape(m[1].trim())] = {
-          nombre: tag(m[2], 'nombre'), user: tag(m[2], 'usuario'), passHash: tag(m[2], 'passHash'),
+          nombre: tag(m[2], 'nombre'), user: tag(m[2], 'usuario'),
+          pass: tag(m[2], 'pass'), passHash: tag(m[2], 'passHash'),
         }
       }
       return hotels
@@ -96,16 +114,23 @@ function readHotels() {
   } catch { return {} }
 }
 
+// El XML se escribe para poder abrirlo y editarlo a mano: un dato por línea y la
+// contraseña legible en <pass>. <passHash> solo se conserva en cuentas anteriores a este
+// formato, y desaparece en cuanto se les pone una contraseña nueva.
 function writeHotels(hotels) {
   fs.ensureDirSync(CONFIG_DIR)
-  const cuerpo = Object.entries(hotels).map(([id, h]) => [
-    `  <hotel id="${xmlEscape(id)}">`,
-    `    <nombre>${xmlEscape(h.nombre)}</nombre>`,
-    `    <usuario>${xmlEscape(h.user)}</usuario>`,
-    `    <passHash>${xmlEscape(h.passHash)}</passHash>`,
-    '  </hotel>',
-  ].join('\n')).join('\n')
-  fs.writeFileSync(HOTELS_XML, `<?xml version="1.0" encoding="UTF-8"?>\n<hoteles>\n${cuerpo}\n</hoteles>\n`)
+  const cuerpo = Object.entries(hotels).map(([id, h]) => {
+    const lineas = [
+      `  <hotel id="${xmlEscape(id)}">`,
+      `    <nombre>${xmlEscape(h.nombre)}</nombre>`,
+      `    <usuario>${xmlEscape(h.user)}</usuario>`,
+    ]
+    if (h.pass) lineas.push(`    <pass>${xmlEscape(h.pass)}</pass>`)
+    else if (h.passHash) lineas.push(`    <passHash>${xmlEscape(h.passHash)}</passHash>`)
+    lineas.push('  </hotel>')
+    return lineas.join('\n')
+  }).join('\n')
+  fs.writeFileSync(HOTELS_XML, `${CABECERA_XML}<hoteles>\n${cuerpo}\n</hoteles>\n`)
 }
 
 function sanitizeId(id) {
@@ -132,12 +157,15 @@ function upsertHotel({ id, nombre, user, pass }) {
   const existing = hotels[hotelId] || {}
 
   if (!existing.user && !user) { console.error('Error: hotel nuevo requiere --user'); process.exit(1) }
-  if (!existing.passHash && !pass) { console.error('Error: hotel nuevo requiere --pass'); process.exit(1) }
+  if (!existing.pass && !existing.passHash && !pass) { console.error('Error: hotel nuevo requiere --pass'); process.exit(1) }
 
+  const nueva = pass !== undefined ? String(pass) : ''
   hotels[hotelId] = {
     nombre: nombre !== undefined ? String(nombre) : (existing.nombre || ''),
     user: user !== undefined ? String(user).trim() : existing.user,
-    passHash: pass !== undefined ? bcrypt.hashSync(String(pass), 10) : existing.passHash,
+    // Al poner contraseña nueva se descarta el hash antiguo: una sola verdad por cuenta.
+    pass: nueva || existing.pass || '',
+    passHash: (nueva || existing.pass) ? '' : (existing.passHash || ''),
   }
   writeHotels(hotels)
   ensureHotelFolder(hotelId)
@@ -169,7 +197,10 @@ function listHotels() {
   const ids = Object.keys(hotels)
   if (!ids.length) { console.log('No hay hoteles registrados.'); return }
   console.log('Hoteles registrados:')
-  for (const id of ids) console.log(`  - ${id}  (usuario: ${hotels[id].user}, nombre: ${hotels[id].nombre || '—'})`)
+  for (const id of ids) {
+    const h = hotels[id]
+    console.log(`  - ${id}  usuario: ${h.user}  clave: ${h.pass || '(hash antiguo, no legible)'}  ${h.nombre || '—'}`)
+  }
 }
 
 // ── main ──

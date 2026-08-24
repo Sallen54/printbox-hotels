@@ -31,7 +31,7 @@ Sistema de envío e impresión de fotos por habitación para hoteles, hostales y
 1. Escanea el QR → entra directo a la pantalla de su habitación (sin escribir ningún código).
 2. Sube fotos que ya tiene guardadas en el móvil (no ve las fotos de otros).
 3. Paga con tarjeta (Square) o PayPal.
-4. **Recepción recibe un e-mail automático** con miniaturas de las fotos, número de copias y el resumen de lo pagado.
+4. **Recepción recibe un e-mail automático** con miniaturas de las fotos, el número total y el resumen de lo pagado.
 5. Recepción imprime las fotos (con el mismo "Panel de Control"/Printer que ya usa Adventures) y se las entrega al huésped.
 
 ### Alta de un hotel (lo hace Printbox)
@@ -44,7 +44,26 @@ node scripts/add-hotel.js --list                          # ver hoteles
 node scripts/add-hotel.js --id marbella --pass "nueva"    # resetear contraseña
 ```
 
-Esto añade la cuenta a `config/hotels.xml` (contraseña cifrada con bcrypt) y crea `config/hotels/marbella/`.
+Esto añade la cuenta a `config/hotels.xml` y crea `config/hotels/marbella/`.
+
+**También puedes editar `config/hotels.xml` a mano** (Bloc de notas, VS Code, Excel): la
+contraseña va tal cual en `<pass>`, así que dar de alta un hotel es copiar un bloque y
+cambiar los cuatro datos.
+
+```xml
+<hotel id="marbella">
+  <nombre>Hotel Marbella</nombre>
+  <usuario>recepcion</usuario>
+  <pass>ClaveDelHotel2026</pass>
+</hotel>
+```
+
+El `id` va sin espacios ni acentos y es lo que viaja en el QR. Para ver las cuentas y sus
+contraseñas: `node scripts/add-hotel.js --list`.
+
+> ⚠️ Ese fichero contiene **las contraseñas de todos los hoteles en claro**. La web nunca lo
+> sirve (`config/.htaccess` lo bloquea), pero cualquiera con acceso al FTP las ve. No lo
+> compartas por correo ni lo dejes en una carpeta sincronizada.
 
 ### Puesta en marcha de un hotel (tutorial)
 
@@ -198,9 +217,9 @@ printbox-hotels/
 
 1. El huésped escanea el QR de su habitación (o recibe la URL) → entra directo a la galería, sin escribir ningún código.
 2. Pulsa **Subir foto**, que abre el selector nativo del móvil (desde ahí puede elegir una foto guardada o hacer una en el momento). El botón de cámara propio está desactivado (`CAMARA_HABILITADA = false`), aunque su código se conserva. **La foto se sube al original, sin redimensionar**, para no perder calidad de impresión; sólo se genera una miniatura para la pantalla y el e-mail.
-3. "Ver pedido" → ve el desglose: **una copia de cada foto** al precio unitario del hotel (por defecto 1,20 €). El selector de copias se retiró; el tope por pedido son **80 fotos** (`MAX_FOTOS` en [src/mobile/MobileApp.jsx](src/mobile/MobileApp.jsx)).
+3. "Ver pedido" → ve el desglose: **una copia de cada foto** al precio unitario del hotel (por defecto 1,20 €). No hay selector de copias; el tope por pedido son **80 fotos** (`MAX_FOTOS` en [src/mobile/MobileApp.jsx](src/mobile/MobileApp.jsx)).
 4. Elige método (**Tarjeta** o **PayPal**) y paga. Si aplica un cupón que cubre el total, no se muestra pasarela: solo un botón de **Enviar pedido**.
-5. Al completar el envío, **recepción recibe automáticamente el e-mail** con miniaturas + copias + resumen del pago (ver sección 7).
+5. Al completar el envío, **recepción recibe automáticamente el e-mail** con las primeras miniaturas, el número de fotos y el resumen del pago (ver sección 7).
 6. Las fotos quedan pendientes de imprimir en el Monitor/Printer de recepción.
 
 ### 6.2 Monitor / Admin — `/viewer`
@@ -233,7 +252,7 @@ Lee el e-mail de recepción del hotel (`email_recepcion` en `config/hotels/<id>/
 Si la habitación no tiene `email_recepcion` configurado, el endpoint responde `{ ok: true, skipped: true }` sin enviar nada (no rompe el flujo del huésped).
 
 ### En desarrollo (`backend/routes/printbox.js`)
-No hay forma sencilla de enviar e-mail real sin credenciales SMTP en local, así que el endpoint de dev **solo loguea por consola** el resumen del pedido (habitación, nº de fotos, copias, total). Es una limitación de desarrollo documentada y aceptada.
+No hay forma sencilla de enviar e-mail real sin credenciales SMTP en local, así que el endpoint de dev **solo loguea por consola** el resumen del pedido (habitación, nº de fotos, total). Es una limitación de desarrollo documentada y aceptada.
 
 ---
 
@@ -247,7 +266,7 @@ Estructura multi-hotel:
 ```
 config/
   .htaccess               # deniega TODO acceso HTTP a este directorio (por fichero, ver nota)
-  hotels.xml              # cuentas: <hotel id=".."><nombre/><usuario/><passHash/></hotel>
+  hotels.xml              # cuentas: <hotel id=".."><nombre/><usuario/><pass/></hotel>
   session_secret.txt      # secreto HMAC de sesión (se genera solo la 1ª vez)
   coupon_secret.txt       # secreto HMAC de los códigos de cupón (se genera solo la 1ª vez)
   square.json             # credenciales de Square (copiar de square.example.json)
@@ -304,7 +323,7 @@ Habitaciones registradas (asistente inicial / Admin), código **sin** prefijo `e
 Logo subido desde el navegador (`POST /hotel-logo`, requiere sesión). Si no existe, `GET /hotel-logo` sirve el placeholder de `assets/`.
 
 ### `config/hotels.xml` (cuentas), `session_secret.txt` y `coupon_secret.txt`
-`hotels.xml` lo gestiona `scripts/add-hotel.js`; los dos secretos los genera el propio backend la primera vez que hacen falta — **nunca** editarlos a mano. Los tres quedan fuera del alcance HTTP por `config/.htaccess`.
+`hotels.xml` lo gestiona `scripts/add-hotel.js`, pero **está pensado para editarse a mano** (contraseñas legibles en `<pass>`). Los dos secretos, en cambio, los genera el propio backend la primera vez que hacen falta — **nunca** editarlos a mano: regenerar `coupon_secret.txt` invalida todos los cupones emitidos y regenerar `session_secret.txt` echa a todos los hoteles de su sesión. Los tres quedan fuera del alcance HTTP por `config/.htaccess`.
 
 ### `config/square.json` y `config/paypal.json`
 Credenciales de las pasarelas de pago (`accessToken`/`locationId` para Square, `clientId`/`clientSecret`/`env` para PayPal). Cada uno tiene un `*.example.json` con placeholders en el repo — copia el que corresponda, rellénalo con las credenciales reales y **nunca lo subas a git** (ya están en `.gitignore`). Si faltan, `/process-payment` y `/paypal/*` responden 500 con un error explícito en vez de fallar en silencio.
