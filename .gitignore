@@ -20,4 +20,5 @@ config/hotels.xml
 config/session_secret.txt
 config/hotels/
 config/coupon_secret.txt
+config/printbox_pass.txt
 config/square.json

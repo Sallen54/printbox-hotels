@@ -29,14 +29,16 @@ router.post('/login', (req, res) => {
     }
 
     const hotels = readHotels(base)
-    const entry = Object.entries(hotels).find(([, h]) => h.user === String(user).trim())
     // <pass> (legible) manda sobre <passHash> (cuentas antiguas). Misma regla que proxy.php.
-    const coincide = (h) => {
-      const enClaro = String(h.pass || '').trim()
+    const coincide = (c) => {
+      const enClaro = String(c.pass || '').trim()
       if (enClaro) return enClaro === String(password)
-      return Boolean(h.passHash) && bcrypt.compareSync(String(password), h.passHash)
+      return Boolean(c.passHash) && bcrypt.compareSync(String(password), c.passHash)
     }
-    if (!entry || !coincide(entry[1])) {
+    // Un hotel puede tener varias cuentas; vale cualquiera de ellas.
+    const entry = Object.entries(hotels).find(([, h]) =>
+      (h.cuentas || [h]).some(c => c.user === String(user).trim() && coincide(c)))
+    if (!entry) {
       registerFailure(req, user)
       return res.status(401).json({ error: 'Usuario o contraseña incorrectos' })
     }

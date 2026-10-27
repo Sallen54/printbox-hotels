@@ -214,11 +214,26 @@ function readHotelsAccounts($base) {
             foreach ($xml->hotel as $h) {
                 $id = trim((string) $h['id']);
                 if ($id === '') continue;
+                // Un hotel puede tener VARIAS cuentas: se emparejan por orden el
+                // <usuario> i-ésimo con el <pass>/<passHash> i-ésimo.
+                $cuentas = [];
+                $total = max(count($h->usuario), count($h->pass), count($h->passHash));
+                for ($i = 0; $i < $total; $i++) {
+                    $u = isset($h->usuario[$i]) ? trim((string) $h->usuario[$i]) : '';
+                    if ($u === '') continue;
+                    $cuentas[] = [
+                        'user'     => $u,
+                        'pass'     => isset($h->pass[$i]) ? (string) $h->pass[$i] : '',
+                        'passHash' => isset($h->passHash[$i]) ? trim((string) $h->passHash[$i]) : '',
+                    ];
+                }
                 $accounts[$id] = [
-                    'nombre'   => trim((string) $h->nombre),
-                    'user'     => trim((string) $h->usuario),
-                    'pass'     => (string) $h->pass,
-                    'passHash' => trim((string) $h->passHash),
+                    'nombre'  => trim((string) $h->nombre),
+                    'cuentas' => $cuentas,
+                    // Compatibilidad con el formato antiguo de un solo usuario por hotel.
+                    'user'     => $cuentas[0]['user'] ?? '',
+                    'pass'     => $cuentas[0]['pass'] ?? '',
+                    'passHash' => $cuentas[0]['passHash'] ?? '',
                 ];
             }
             return $accounts;
@@ -249,7 +264,13 @@ function getReadConfigDir() {
 }
 
 function pbhSetSessionCookie($token, $ttl) {
-    $secure = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off');
+    // Detrás del proxy TLS de IONOS, $_SERVER['HTTPS'] llega vacío aunque el huésped esté
+    // en https, y la cookie de sesión salía sin `Secure`. Se miran las mismas cabeceras
+    // que usa la redirección a HTTPS del .htaccess.
+    $secure = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off')
+        || (($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? '') === 'https')
+        || (($_SERVER['HTTP_X_FORWARDED_SSL'] ?? '') === 'on')
+        || (($_SERVER['SERVER_PORT'] ?? '') === '443');
     setcookie(PBH_COOKIE, $token, [
         'expires'  => $ttl > 0 ? time() + $ttl : time() - 3600,
         'path'     => '/',
@@ -324,7 +345,7 @@ function encodeMimeSubject($text) {
 
 // Construye y envía (mail() nativo de IONOS, sin librerías) el aviso de pedido a recepción,
 // con las miniaturas embebidas inline vía Content-ID — sin necesidad de SMTP/PHPMailer.
-function sendRoomOrderEmail($to, $room, $items, $numFotos, $total, $paymentMethod) {
+function sendRoomOrderEmail($to, $room, $items, $numFotos, $numCopias, $conAlbum, $total, $paymentMethod) {
     $to = filter_var(trim($to), FILTER_VALIDATE_EMAIL);
     if (!$to) return false;
 
@@ -364,13 +385,23 @@ function sendRoomOrderEmail($to, $room, $items, $numFotos, $total, $paymentMetho
         ? "<p style=\"margin:10px 0 0;font-size:13px;color:#888;\">y {$restantes} foto(s) m&aacute;s (no se muestran todas para no hacer el correo pesado).</p>"
         : '';
 
+    // El álbum se entrega en mano: va arriba del todo y bien visible, o recepción no lo ve.
+    $copiasEsc = (int) $numCopias;
+    $albumHtml = $conAlbum
+        ? '<div style="background:#e6f6ea;border:1px solid #198754;border-left:5px solid #198754;border-radius:8px;padding:12px 14px;margin:0 0 16px;">'
+          . '<p style="margin:0;font-size:16px;color:#14532d;font-weight:bold;">&#127873; Entregar 1 &Aacute;LBUM de regalo</p>'
+          . '<p style="margin:4px 0 0;font-size:13px;color:#256b3f;">Este pedido supera las fotos necesarias para la promoci&oacute;n.</p>'
+          . '</div>'
+        : '';
+
     $htmlBody = <<<HTML
 <html><body style="font-family:Arial,sans-serif;background:#f4f4f4;padding:24px;margin:0;">
 <div style="max-width:480px;margin:0 auto;background:#ffffff;border-radius:10px;overflow:hidden;border:1px solid #eee;">
   <div style="background:#14110d;color:#c9a24b;padding:18px 22px;font-size:18px;font-weight:bold;">Printbox Hotels</div>
   <div style="padding:22px;">
     <p style="margin:0 0 16px;font-size:16px;color:#222;">Nuevo pedido &mdash; <strong>Habitaci&oacute;n {$roomEsc}</strong></p>
-    <p style="margin:0 0 12px;font-size:14px;color:#555;"><strong>{$fotosEsc}</strong> foto(s) para imprimir &middot; una copia de cada una</p>
+    {$albumHtml}
+    <p style="margin:0 0 12px;font-size:14px;color:#555;"><strong>{$fotosEsc}</strong> foto(s) &middot; <strong>{$copiasEsc}</strong> copia(s) para imprimir</p>
     <div>{$imgsHtml}</div>
     {$restoHtml}
     <p style="margin-top:18px;font-size:15px;color:#222;">Total pagado: <strong>{$totalEsc}&euro;</strong> &middot; {$paymentEsc}</p>
@@ -534,6 +565,48 @@ function pbhClearLoginFailures($base, $user) {
 
 // ── VALIDACIÓN DEL IMPORTE EN EL SERVIDOR ──
 // El importe llega del cliente, y el cliente es manipulable (DevTools, curl). Aquí
+// Contraseña de los ajustes reservados a Printbox (evento de impresión, precio por foto y
+// URL del servidor). La de verdad vive en config/printbox_pass.txt, FUERA del alcance HTTP;
+// si no existe se usa esta, que es la que lleva el panel. Ojo: la del navegador es solo para
+// no enseñar los campos — la que manda es esta, que el cliente nunca ve.
+function pbhClaveAjustes($base) {
+    $f = $base . '/printbox_pass.txt';
+    if (is_file($f)) {
+        $clave = trim((string) @file_get_contents($f));
+        if ($clave !== '') return $clave;
+    }
+    return 'HostyPrint2026@';
+}
+
+// Campos que solo puede tocar Printbox. Se comparan con lo que ya hay guardado: si no
+// cambian, no hace falta contraseña (así recepción puede seguir guardando habitaciones,
+// textos o el email sin saberla).
+function pbhCambiaAjustesReservados($data, $configDir) {
+    $previo = ['evento_printer' => '', 'servidor' => ''];
+    $api = @file_get_contents($configDir . '/servidor_api.txt');
+    if ($api !== false) {
+        foreach (explode("\n", $api) as $l) {
+            foreach (['evento_printer', 'servidor'] as $k) {
+                if (strpos($l, $k . ';') === 0) $previo[$k] = trim(substr($l, strlen($k) + 1));
+            }
+        }
+    }
+    $prevPrecio = pbhReadPrices($configDir)['precio1'];
+
+    if (isset($data['config'])) {
+        foreach (['evento_printer', 'servidor'] as $k) {
+            if (isset($data['config'][$k]) && trim((string) $data['config'][$k]) !== $previo[$k]) return true;
+        }
+    }
+    if (isset($data['textos']['precio1'])) {
+        if (abs((float) $data['textos']['precio1'] - (float) $prevPrecio) > 0.0001) return true;
+    }
+    return false;
+}
+
+// Tope de copias de una misma foto; el móvil usa el mismo número (MAX_COPIAS).
+define('PBH_MAX_COPIAS', 20);
+
 // se recalcula a partir de los precios del hotel (textos.txt) y del desglose de
 // copias que acompaña al pago en `order`. Misma lógica que en backend/server.js.
 //
@@ -596,15 +669,18 @@ function pbhCheckAmountCents($data, $amountCents, &$err) {
     $order     = is_array($data['order'] ?? null) ? $data['order'] : null;
     $configDir = pbhOrderConfigDir($order ?: []);
     $prices    = pbhReadPrices($configDir);
-    $table     = [0, $prices['precio1'], $prices['precio2'], $prices['precio3']];
 
     if ($order && !empty($order['copies']) && is_array($order['copies'])) {
+        // Precio POR COPIA, sin tramos: el móvil deja pedir las copias que haga falta y
+        // antes, con la tabla [precio1, precio2, precio3], de la tercera en adelante se
+        // cobraban como tres. precio2/precio3 son múltiplos de precio1, así que para 1, 2 y
+        // 3 copias el importe no cambia.
         $total = 0.0;
         foreach ($order['copies'] as $c) {
             $n = intval($c);
             if ($n < 1) continue;
-            if ($n > 3) $n = 3;
-            $total += $table[$n];
+            if ($n > PBH_MAX_COPIAS) $n = PBH_MAX_COPIAS;
+            $total += $n * $prices['precio1'];
         }
         $expected = (int) round($total * 100);
         $expected = max(0, $expected - pbhCouponDiscountCents($order, $expected));
@@ -616,7 +692,7 @@ function pbhCheckAmountCents($data, $amountCents, &$err) {
         return true;
     }
 
-    $min = (int) round(min($prices['precio1'], $prices['precio2'], $prices['precio3']) * 100);
+    $min = (int) round($prices['precio1'] * 100);
     if ($amountCents < $min) {
         $err = 'Importe inferior al mínimo configurado';
         return false;
@@ -748,16 +824,18 @@ if ($uri === '/auth/login' && $_SERVER['REQUEST_METHOD'] === 'POST') {
     $hotels = readHotelsAccounts($base);
     $foundId = null; $foundNombre = '';
     foreach ($hotels as $hid => $h) {
-        if (($h['user'] ?? '') !== $user) continue;
-        // <pass> (legible) manda sobre <passHash> (cuentas antiguas). hash_equals compara en
-        // tiempo constante: sin él, el tiempo de respuesta delataría cuántos caracteres se
-        // han acertado. Misma comprobación que hace password_verify por dentro.
-        $enClaro = trim((string)($h['pass'] ?? ''));
-        $correcta = $enClaro !== ''
-            ? hash_equals($enClaro, $password)
-            : (!empty($h['passHash']) && password_verify($password, $h['passHash']));
-        if ($correcta) {
-            $foundId = $hid; $foundNombre = $h['nombre'] ?? ''; break;
+        // Cuentas del hotel (formato nuevo) o la única del formato antiguo.
+        $cuentas = $h['cuentas'] ?? [['user' => $h['user'] ?? '', 'pass' => $h['pass'] ?? '', 'passHash' => $h['passHash'] ?? '']];
+        foreach ($cuentas as $c) {
+            if (($c['user'] ?? '') !== $user) continue;
+            // <pass> (legible) manda sobre <passHash> (cuentas antiguas). hash_equals compara
+            // en tiempo constante: sin él, el tiempo de respuesta delataría cuántos caracteres
+            // se han acertado. Misma comprobación que hace password_verify por dentro.
+            $enClaro = trim((string)($c['pass'] ?? ''));
+            $correcta = $enClaro !== ''
+                ? hash_equals($enClaro, $password)
+                : (!empty($c['passHash']) && password_verify($password, $c['passHash']));
+            if ($correcta) { $foundId = $hid; $foundNombre = $h['nombre'] ?? ''; break 2; }
         }
     }
     if (!$foundId) {
@@ -929,6 +1007,17 @@ if ($uri === '/config' && $_SERVER['REQUEST_METHOD'] === 'POST') {
         http_response_code(500);
         echo json_encode(['error' => 'No se pudo crear directorio del hotel']);
         exit();
+    }
+
+    // Los ajustes reservados exigen la contraseña de Printbox, no basta con tener sesión.
+    if (pbhCambiaAjustesReservados($data, $configDir)) {
+        $enviada = (string) ($data['adminPass'] ?? '');
+        if (!hash_equals(pbhClaveAjustes($base), $enviada)) {
+            pbhLogActividad($configDir, 'AJUSTE_RESERVADO_RECHAZADO', 'intento sin la contraseña de Printbox');
+            http_response_code(403);
+            echo json_encode(['error' => 'El evento de impresión, el precio y la URL del servidor necesitan la contraseña de Printbox']);
+            exit();
+        }
     }
 
     $writeErrors = [];
@@ -1152,6 +1241,11 @@ if (strpos($uri, '/printbox/') === 0) {
         if (!empty($data['orientation'])) {
             $payload['orientation'] = $data['orientation'];
         }
+        // Medidas reales de la imagen, igual que las manda la app Flutter.
+        if (!empty($data['ImageWidth']) && !empty($data['ImageHeight'])) {
+            $payload['ImageWidth']  = (int) $data['ImageWidth'];
+            $payload['ImageHeight'] = (int) $data['ImageHeight'];
+        }
 
         $result = proxyPost($PRINTBOX_BASE . '/api/v1/events/photo/send', $payload, $headers);
         http_response_code($result['code'] ?: 500);
@@ -1169,6 +1263,9 @@ if (strpos($uri, '/printbox/') === 0) {
         // En un pedido grande el móvil manda sólo las primeras miniaturas (el correo no
         // puede llevarlas todas) y el total real de fotos en `fotos`.
         $numFotos = max(count((array) $items), (int) ($data['fotos'] ?? 0));
+        $numCopias = max($numFotos, (int) ($data['copias'] ?? 0));
+        // Regalo por volumen: recepción tiene que entregar el álbum con las fotos.
+        $conAlbum = !empty($data['album']);
 
         // El hotel llega en ?hotel= (lo añade el móvil desde el QR); el email de
         // recepción se lee del textos.txt de ESE hotel.
@@ -1176,8 +1273,9 @@ if (strpos($uri, '/printbox/') === 0) {
 
         // Un pedido completo = fotos enviadas a imprimir. Se registra aunque no haya email.
         pbhLogActividad($configDir, 'ENVIADO_A_IMPRIMIR', sprintf(
-            'habitación %s · %d foto(s) · %s€ · %s',
-            $room !== '' ? $room : '?', $numFotos, $total, $paymentMethod ?: '-'
+            'habitación %s · %d foto(s) · %d copia(s) · %s€ · %s%s',
+            $room !== '' ? $room : '?', $numFotos, $numCopias, $total, $paymentMethod ?: '-',
+            $conAlbum ? ' · ÁLBUM DE REGALO' : ''
         ));
 
         $emailTo = getHotelReceptionEmail($configDir);
@@ -1187,7 +1285,7 @@ if (strpos($uri, '/printbox/') === 0) {
             exit();
         }
 
-        $sent = sendRoomOrderEmail($emailTo, $room, $items, $numFotos, $total, $paymentMethod);
+        $sent = sendRoomOrderEmail($emailTo, $room, $items, $numFotos, $numCopias, $conAlbum, $total, $paymentMethod);
         echo json_encode(['ok' => (bool) $sent]);
         exit();
     }

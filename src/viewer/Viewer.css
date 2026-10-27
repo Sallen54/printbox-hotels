@@ -257,14 +257,24 @@
   align-items: center;
   justify-content: center;
   min-height: 300px;
+  padding: 10px;
 }
 
+/* El 80vh no contaba ni la cabecera del modal ni los márgenes del diálogo, así que una foto
+   vertical se salía por abajo y aparecía cortada. Se descuenta ese espacio. */
 .photo-viewer-image {
   max-width: 100%;
-  max-height: 80vh;
+  max-height: calc(100vh - 170px);
+  width: auto;
+  height: auto;
   object-fit: contain;
   display: block;
   box-shadow: 0 8px 24px rgba(64, 48, 20, 0.25);
+}
+
+/* Y el modal nunca puede pasar del alto de la pantalla. */
+.photo-modal .modal-content {
+  max-height: calc(100vh - 2rem);
 }
 
 /* ========== GALERÍA ========== */
@@ -282,6 +292,11 @@
   flex-wrap: wrap;
   gap: 0.5rem;
   padding: 0.5rem 1.2rem 0;
+  /* Mismo ancho y centrado que la rejilla: si no, el título y la pista quedaban en los
+     extremos de la pantalla y las fotos en el centro. */
+  max-width: 2400px;
+  width: 100%;
+  margin: 0 auto;
 }
 
 .gallery-title {
@@ -401,14 +416,16 @@
 /* ========== GRID GALERÍA ========== */
 .viewer-gallery-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(180px, 220px));
+  /* `1fr` en vez de un tope de 220px: las columnas estiran hasta llenar el ancho. Con el
+     tope fijo, en un monitor 2K salían 5 fotos pequeñas centradas y media pantalla vacía a
+     cada lado. El límite de 2400px evita que en pantallas gigantes las fotos se deformen. */
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
   grid-auto-rows: minmax(240px, auto);
   gap: 1rem;
   padding: 1.2rem;
-  max-width: 1400px;
+  max-width: 2400px;
   width: 100%;
   margin: 0 auto;
-  justify-content: center;
 }
 
 /* ========== PAGINADOR ========== */
@@ -455,37 +472,52 @@
   justify-content: center;
   flex-wrap: wrap;
   gap: 0.5rem 1.5rem;
-  padding: 0.6rem 1rem;
-  max-width: 1400px;
+  padding: 0.6rem 1.5rem;
+  max-width: 2400px;
   margin: 0 auto;
   width: 100%;
 }
 
-/* En el footer oscuro sí funciona el dorado claro de marca */
-.price-badge {
-  display: inline-flex;
-  align-items: center;
-  font-family: 'DM Mono', monospace;
-  font-size: 11.5px;
-  letter-spacing: 1px;
-  color: #f2ead9;
+@media (max-width: 700px) {
+  .soporte-logo { margin-left: 0; }
 }
 
-.price-badge .badge {
-  font-size: 14px;
-  font-weight: 700;
-  background-color: var(--pb-accent, #c9a24b) !important;
-  color: #221a0e !important;
-  border-radius: 4px;
-  margin-left: 0.35rem;
-}
-
-.company-name {
-  color: #8a7a5e;
+/* ── Soporte en el pie ──
+   Recepción mira aquí cuando algo falla, así que el teléfono y el correo van legibles y
+   son pulsables (en una tablet llaman o escriben de un toque). */
+.soporte-label {
   font-family: 'DM Mono', monospace;
   font-size: 0.72rem;
   letter-spacing: 2px;
   text-transform: uppercase;
+  color: #8a7a5e;
+}
+
+.soporte-dato {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-size: 14px;
+  font-weight: 600;
+  color: #f2ead9;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.soporte-dato i {
+  color: var(--pb-accent, #c9a24b);
+  font-size: 15px;
+}
+
+.soporte-dato:hover {
+  color: var(--pb-accent, #c9a24b);
+}
+
+.soporte-logo {
+  height: 20px;
+  width: auto;
+  margin-left: auto;
+  opacity: 0.9;
 }
 
 /* ========== RESPONSIVE ========== */
@@ -733,4 +765,34 @@
   margin-top: 10px;
   padding-top: 10px;
   border-top: 1px dashed rgba(176, 138, 53, 0.4);
+}
+
+/* ========== BARRA DE SCROLL DE LA GALERÍA ==========
+   El Monitor está pensado para quedarse encendido en recepción: la barra del sistema
+   desentonaba con el crema. `scrollbar-gutter: stable` reserva su hueco siempre, para que
+   la rejilla no dé un salto lateral al pasar de una página con scroll a otra sin él. */
+.viewer-gallery {
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(176, 138, 53, 0.45) transparent;
+}
+
+.viewer-gallery::-webkit-scrollbar {
+  width: 10px;
+}
+
+.viewer-gallery::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.viewer-gallery::-webkit-scrollbar-thumb {
+  background: rgba(176, 138, 53, 0.45);
+  border-radius: 999px;
+  border: 3px solid transparent;
+  background-clip: content-box;
+}
+
+.viewer-gallery::-webkit-scrollbar-thumb:hover {
+  background: rgba(176, 138, 53, 0.7);
+  background-clip: content-box;
 }

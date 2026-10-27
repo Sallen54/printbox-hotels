@@ -102,10 +102,18 @@ function readHotels() {
         const m = block.match(new RegExp(`<${name}>([\\s\\S]*?)</${name}>`))
         return m ? xmlUnescape(m[1].trim()) : ''
       }
+      // Todas las apariciones, en orden: un hotel puede tener varias cuentas.
+      const tags = (block, name) =>
+        [...block.matchAll(new RegExp(`<${name}>([\\s\\S]*?)</${name}>`, 'g'))].map(x => xmlUnescape(x[1].trim()))
       for (const m of xml.matchAll(/<hotel\s+id="([^"]+)"\s*>([\s\S]*?)<\/hotel>/g)) {
+        const usuarios = tags(m[2], 'usuario')
+        const passes = tags(m[2], 'pass')
+        const hashes = tags(m[2], 'passHash')
         hotels[xmlUnescape(m[1].trim())] = {
-          nombre: tag(m[2], 'nombre'), user: tag(m[2], 'usuario'),
-          pass: tag(m[2], 'pass'), passHash: tag(m[2], 'passHash'),
+          nombre: tag(m[2], 'nombre'),
+          cuentas: usuarios
+            .map((user, i) => ({ user, pass: passes[i] || '', passHash: hashes[i] || '' }))
+            .filter(c => c.user),
         }
       }
       return hotels
@@ -123,10 +131,12 @@ function writeHotels(hotels) {
     const lineas = [
       `  <hotel id="${xmlEscape(id)}">`,
       `    <nombre>${xmlEscape(h.nombre)}</nombre>`,
-      `    <usuario>${xmlEscape(h.user)}</usuario>`,
     ]
-    if (h.pass) lineas.push(`    <pass>${xmlEscape(h.pass)}</pass>`)
-    else if (h.passHash) lineas.push(`    <passHash>${xmlEscape(h.passHash)}</passHash>`)
+    for (const c of (h.cuentas || [])) {
+      lineas.push(`    <usuario>${xmlEscape(c.user)}</usuario>`)
+      if (c.pass) lineas.push(`    <pass>${xmlEscape(c.pass)}</pass>`)
+      else if (c.passHash) lineas.push(`    <passHash>${xmlEscape(c.passHash)}</passHash>`)
+    }
     lineas.push('  </hotel>')
     return lineas.join('\n')
   }).join('\n')
@@ -156,20 +166,33 @@ function upsertHotel({ id, nombre, user, pass }) {
   const hotels = readHotels()
   const existing = hotels[hotelId] || {}
 
-  if (!existing.user && !user) { console.error('Error: hotel nuevo requiere --user'); process.exit(1) }
-  if (!existing.pass && !existing.passHash && !pass) { console.error('Error: hotel nuevo requiere --pass'); process.exit(1) }
+  const cuentas = [...(existing.cuentas || [])]
+  if (!cuentas.length && !user) { console.error('Error: hotel nuevo requiere --user'); process.exit(1) }
+  if (user !== undefined && pass === undefined && !cuentas.some(c => c.user === String(user).trim())) {
+    console.error('Error: la cuenta nueva requiere --pass'); process.exit(1)
+  }
+  if (!cuentas.length && pass === undefined) { console.error('Error: hotel nuevo requiere --pass'); process.exit(1) }
 
-  const nueva = pass !== undefined ? String(pass) : ''
+  if (user !== undefined) {
+    // Alta o cambio de contraseña de ESA cuenta; las demás del hotel se quedan como están.
+    const nombreUsuario = String(user).trim()
+    const i = cuentas.findIndex(c => c.user === nombreUsuario)
+    // Al poner contraseña nueva se descarta el hash antiguo: una sola verdad por cuenta.
+    const cuenta = { user: nombreUsuario, pass: pass !== undefined ? String(pass) : (cuentas[i]?.pass || ''), passHash: '' }
+    if (i >= 0) cuentas[i] = cuenta
+    else cuentas.push(cuenta)
+  } else if (pass !== undefined && cuentas.length) {
+    cuentas[0] = { ...cuentas[0], pass: String(pass), passHash: '' }
+  }
+
   hotels[hotelId] = {
     nombre: nombre !== undefined ? String(nombre) : (existing.nombre || ''),
-    user: user !== undefined ? String(user).trim() : existing.user,
-    // Al poner contraseña nueva se descarta el hash antiguo: una sola verdad por cuenta.
-    pass: nueva || existing.pass || '',
-    passHash: (nueva || existing.pass) ? '' : (existing.passHash || ''),
+    cuentas,
   }
   writeHotels(hotels)
   ensureHotelFolder(hotelId)
-  console.log(`✓ Hotel "${hotelId}" guardado (usuario: ${hotels[hotelId].user}, nombre: ${hotels[hotelId].nombre || '—'})`)
+  const usuarios = hotels[hotelId].cuentas.map(c => c.user).join(', ')
+  console.log(`✓ Hotel "${hotelId}" guardado (usuarios: ${usuarios}, nombre: ${hotels[hotelId].nombre || '—'})`)
   console.log(`  Carpeta: config/hotels/${hotelId}/`)
 }
 
@@ -199,7 +222,10 @@ function listHotels() {
   console.log('Hoteles registrados:')
   for (const id of ids) {
     const h = hotels[id]
-    console.log(`  - ${id}  usuario: ${h.user}  clave: ${h.pass || '(hash antiguo, no legible)'}  ${h.nombre || '—'}`)
+    console.log(`  - ${id}  (${h.nombre || '—'})`)
+    for (const c of h.cuentas || []) {
+      console.log(`      usuario: ${c.user}  clave: ${c.pass || '(hash antiguo, no legible)'}`)
+    }
   }
 }
 

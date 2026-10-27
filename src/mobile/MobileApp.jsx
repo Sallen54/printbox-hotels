@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react'
 import { findEvent, sendPhoto, getConfig, processPayment, getPayPalConfig, createPayPalOrder, capturePayPalOrder, notifyRoomOrder, hotelLogoUrl } from '../shared/api'
 import { useInterval } from '../shared/hooks/useInterval'
+import { guardarPedido, leerPedido, borrarPedido } from '../shared/photoStore'
 import './Mobile.css'
 
 window.isMobile = true
@@ -100,6 +101,7 @@ const CAMARA_HABILITADA = false
 // igual que la app Flutter. Todo lo de abajo existe para que un pedido de 80 originales no
 // se quede sin memoria en el móvil ni tarde una eternidad en subir.
 const MAX_FOTOS = 80                                // tope de fotos por pedido
+const MAX_COPIAS = 20                               // copias de una misma foto
 const THUMB_SIZE = 320                              // miniatura: interfaz y e-mail a recepción
 const ANCHO_MONITOR = 1600                          // copia para el Monitor, que sólo se mira
 const CONCURRENCIA_ENVIO = 2                        // fotos en vuelo (manda el ancho de banda)
@@ -111,8 +113,14 @@ const FORMATOS_DIRECTOS = /^image\/(jpe?g|png)$/i   // HEIC, WEBP… se pasan a 
 const LIMITE_SUBIDA_CHARS = 9000000
 const ANCHO_MAXIMO_SEGURO = 2400
 
-// Precio por foto mientras no responda el servidor. precio2/precio3 son múltiplos y solo
-// existen para que la tabla del servidor siga cuadrando: el móvil vende una copia por foto.
+// Regalo por volumen: a partir de estas copias impresas, el hotel regala un álbum. Se
+// cuentan COPIAS (lo que se imprime y se paga), no fotos distintas: 12 fotos a 3 copias son
+// 36 impresiones y el álbum se llena igual. Para quitar la promoción, poner 0.
+const COPIAS_PARA_ALBUM = 35
+
+// Precios mientras no responda el servidor: 1, 2 y 3 copias de una misma foto. El Admin
+// guarda precio2 y precio3 como múltiplos de precio1, así que dos copias valen lo mismo que
+// dos fotos sueltas. Los dos backends validan el importe con esta misma tabla.
 const PRECIOS_DEFECTO = { precio1: '1.20', precio2: '2.40', precio3: '3.60' }
 
 // ── CONSTANTES DE SQUARE ──
@@ -149,7 +157,8 @@ export default function MobileApp() {
   const [facingMode, setFacingMode] = useState('environment')
 
   // --- Fotos del pedido ---
-  // Cada foto es { file, thumb, orientation, id } — o { dataUrl, ... } si viene de la cámara.
+  // Cada foto es { file, thumb, orientation, copies, id } — con `dataUrl` en vez de `file`
+  // si viene de la cámara. `copies` es 1, 2 o 3 y lo elige el huésped en el carro.
   const [capturedPhotos, setCapturedPhotos] = useState([])
   const galleryFileInputRef = useRef(null)
   // Progreso {hechas, total} de las dos partes lentas. Sin ellos el móvil parece colgado:
@@ -159,6 +168,8 @@ export default function MobileApp() {
   // Permite abortar una importación larga sin cerrar la app (ref y no estado: se consulta
   // dentro del bucle, que no ve los cambios de estado).
   const cancelarImportRef = useRef(false)
+  // Hasta que no se ha leído el pedido guardado, no se escribe encima.
+  const pedidoRecuperadoRef = useRef(false)
   // Nombres de las fotos que el móvil no ha podido leer. Van a un aviso fijo (no a un
   // toast) para que se puedan leer con calma y sepamos qué archivos fallan.
   const [fotosOmitidas, setFotosOmitidas] = useState([])
@@ -186,12 +197,12 @@ export default function MobileApp() {
 
   // "Habitación <nombre>" (buscado por código); sin duplicar el prefijo si ya empieza por
   // "Hab", y con el código de respaldo si la habitación no está registrada.
+  // Solo el nombre que haya puesto el alojamiento ("M101", "Parcela 12", "Bungalow 3"):
+  // no todos son hoteles, y anteponer "Habitación" chirriaba en campings y apartamentos.
   const roomLabel = (() => {
     const code = normalizeEventCode(eventCode)
     const room = habitaciones.find(h => normalizeEventCode(h.codigo) === code)
-    const nombre = room?.nombre?.trim()
-    if (!nombre) return `Habitación ${eventCode}`
-    return /^hab/i.test(nombre) ? nombre : `Habitación ${nombre}`
+    return room?.nombre?.trim() || eventCode
   })()
 
   const showToast = (msg, duration = 3000) => {
@@ -229,8 +240,8 @@ export default function MobileApp() {
         const parsed = JSON.parse(data)
         if (parsed.hotelId) setHotelId(parsed.hotelId)
         setEventCode(parsed.eventCode || '')
-        // Las fotos no se guardan, así que tras recargar nunca hay pedido: se vuelve a la
-        // galería en vez de dejarle en una pantalla de pago vacía.
+        // Las fotos llegan de IndexedDB (asíncrono, más abajo). Hasta que se sepa si hay
+        // pedido guardado no se entra al paso de pago, para no enseñar un carrito vacío.
         const paso = parsed.step || STEP_EVENT
         setStep(paso === STEP_ORDER ? STEP_GALLERY : paso)
         setUuid(parsed.uuid || null)
@@ -240,6 +251,40 @@ export default function MobileApp() {
     }
     return null
   }
+
+  // ── PEDIDO GUARDADO (sobrevive a una recarga, caduca a las 2 h) ──
+  // Se guarda en cada cambio del pedido; cada guardado renueva el reloj de inactividad.
+  useEffect(() => {
+    if (!pedidoRecuperadoRef.current) return // aún no se ha leído lo guardado: no pisarlo
+    if (capturedPhotos.length) guardarPedido({ fotos: capturedPhotos, hotelId, eventCode, step })
+    else borrarPedido()
+  }, [capturedPhotos, hotelId, eventCode, step])
+
+  useEffect(() => {
+    let cancelado = false
+    leerPedido().then(guardado => {
+      if (cancelado) return
+      if (guardado?.fotos?.length) {
+        setCapturedPhotos(guardado.fotos)
+        if (guardado.eventCode) setEventCode(guardado.eventCode)
+      }
+      pedidoRecuperadoRef.current = true
+    })
+    return () => { cancelado = true }
+  }, [])
+
+  // Con la pestaña abierta y nadie tocando nada, el pedido también caduca.
+  useEffect(() => {
+    const id = setInterval(async () => {
+      const guardado = await leerPedido()
+      if (!guardado && capturedPhotos.length && pedidoRecuperadoRef.current) {
+        setCapturedPhotos([])
+        setStep(STEP_GALLERY)
+        showToast('Tu selección se ha vaciado tras 2 horas sin actividad', 6000)
+      }
+    }, 60000)
+    return () => clearInterval(id)
+  }, [capturedPhotos.length])
 
   // ── EFECTOS INICIALES ──
   useEffect(() => {
@@ -409,6 +454,7 @@ export default function MobileApp() {
                 await redeemCoupon(couponCode, orderId)
               }
               await sendOrderPhotos({ paymentMethod: 'PayPal', amountPaid: finalPrice })
+              await borrarPedido() // enviado: que una recarga no lo resucite
               setStep(STEP_SUCCESS)
             } catch (error) {
               setPaypalError(error.message)
@@ -535,7 +581,10 @@ export default function MobileApp() {
     setCapturedPhotos(prev => [...prev, {
       dataUrl: raw,
       thumb,
+      copies: 1,
       orientation: canvas.height > canvas.width ? 'portrait' : 'landscape',
+      width: canvas.width,
+      height: canvas.height,
       id: Date.now(),
     }])
     showToast('Foto capturada')
@@ -549,6 +598,15 @@ export default function MobileApp() {
     else stopCamera()
     return () => stopCamera()
   }, [step, facingMode])
+  // `delta` es +1 o -1 (flechas del selector). Se queda entre 1 y MAX_COPIAS.
+  function cambiarCopias(id, delta) {
+    setCapturedPhotos(prev => prev.map(p => {
+      if (p.id !== id) return p
+      const n = Math.min(Math.max((parseInt(p.copies) || 1) + delta, 1), MAX_COPIAS)
+      return { ...p, copies: n }
+    }))
+  }
+
   function removeCaptured(id) {
     setCapturedPhotos(prev => prev.filter(p => p.id !== id))
   }
@@ -591,9 +649,12 @@ export default function MobileApp() {
             nuevas.push({
               file,
               thumb,
+              copies: 1,
               // Misma regla que la app Flutter: alto > ancho → vertical; el resto (incluida
               // la foto cuadrada) → horizontal.
               orientation: img.naturalHeight > img.naturalWidth ? 'portrait' : 'landscape',
+              width: img.naturalWidth,
+              height: img.naturalHeight,
               id: `${Date.now()}${Math.random()}`,
             })
           } else {
@@ -628,10 +689,18 @@ export default function MobileApp() {
     const n = parseFloat(value)
     return Number.isFinite(n) ? n : fallback
   }
-  // Precio único por foto: una copia de cada una. El servidor lo recalcula con la misma
-  // tabla, por eso el pedido sigue viajando como una lista de copias (todas a 1).
-  const pricePerPhoto = () => priceOr(textos.precio1, parseFloat(PRECIOS_DEFECTO.precio1))
-  const totalPrice = () => (capturedPhotos.length * pricePerPhoto()).toFixed(2)
+  // Precio por copia, sin tope: una copia cuesta `precio1` y N copias cuestan N veces eso.
+  // Antes era una tabla de 3 tramos y a partir de la tercera copia se cobraba de menos.
+  // precio2/precio3 siguen guardándose (x2 y x3) para no romper los ficheros existentes.
+  const precioCopia = () => priceOr(textos.precio1, parseFloat(PRECIOS_DEFECTO.precio1))
+  const priceForPhoto = (copies) => precioCopia() * Math.min(Math.max(parseInt(copies) || 1, 1), MAX_COPIAS)
+  const totalCopies = capturedPhotos.reduce((n, p) => n + (p.copies || 1), 0)
+  const totalPrice = () => capturedPhotos.reduce((s, p) => s + priceForPhoto(p.copies), 0).toFixed(2)
+
+  // Regalo: cuántas copias faltan y si ya está conseguido.
+  const albumActivo = COPIAS_PARA_ALBUM > 0
+  const albumConseguido = albumActivo && totalCopies >= COPIAS_PARA_ALBUM
+  const albumRestantes = Math.max(0, COPIAS_PARA_ALBUM - totalCopies)
 
   // Un cupón 'discount' resta su importe; uno 'full' cubre el pedido entero cuando su
   // importe alcanza el total (si no, cubre lo que puede y el resto se paga con tarjeta).
@@ -645,7 +714,7 @@ export default function MobileApp() {
   const orderPayload = () => ({
     hotel: hotelId,
     evento: normalizeEventCode(eventCode),
-    copies: capturedPhotos.map(() => 1),
+    copies: capturedPhotos.map(p => p.copies || 1),
     coupon: appliedCoupon ? couponCode.trim().toUpperCase() : undefined,
   })
 
@@ -661,6 +730,7 @@ export default function MobileApp() {
     try {
       if (appliedCoupon) await redeemCoupon(couponCode, `mobile_${Date.now()}`)
       await sendOrderPhotos({ paymentMethod: 'Cupón (pago completo)', amountPaid: '0.00' })
+      await borrarPedido() // enviado: que una recarga no lo resucite
       setStep(STEP_SUCCESS)
     } catch (e) {
       setSquareError(`Error: ${e.message}`)
@@ -692,6 +762,7 @@ export default function MobileApp() {
         await redeemCoupon(couponCode, orderId)
       }
       await sendOrderPhotos({ paymentMethod: 'Tarjeta (Square)', amountPaid: finalPrice })
+      await borrarPedido() // ya está pagado y enviado: que una recarga no lo resucite
       setStep(STEP_SUCCESS)
     } catch (e) {
       setSquareError(`Error: ${e.message}`)
@@ -744,8 +815,22 @@ export default function MobileApp() {
     const subirFoto = async (photo) => {
       const image = await leerOriginal(photo)
       const orientation = photo.orientation || 'portrait'
-      const uniqueName = `c${Date.now()}${Math.random().toString(36).substr(2,9)}`
-      await conReintento(() => sendPhoto({ event: printTarget, image, times: 1, name: uniqueName, phone: '000000000', orientation }))
+      // Si la red de seguridad redujo la foto, las medidas que se declaran son las de
+      // verdad: el redimensionado mantiene la proporción, así que basta con escalarlas.
+      const medidas = (() => {
+        const { width, height } = photo
+        if (!width || !height) return {}
+        const factor = image === photo.dataUrl ? 1 : Math.min(ANCHO_MAXIMO_SEGURO / width, ANCHO_MAXIMO_SEGURO / height, 1)
+        return factor === 1
+          ? { width, height }
+          : { width: Math.round(width * factor), height: Math.round(height * factor) }
+      })()
+      const copias = Math.min(Math.max(parseInt(photo.copies) || 1, 1), 3)
+      // La foto se sube UNA vez y se piden N copias por dos vías que el Printer entiende:
+      // `times` (lo que devuelve la API en photos_two) y el nombre `print_N_` (que usa como
+      // respaldo). Subirla N veces multiplicaría por N unos megas que ya son grandes.
+      const uniqueName = `print_${copias}_c${Date.now()}${Math.random().toString(36).substr(2,9)}`
+      await conReintento(() => sendPhoto({ event: printTarget, image, times: copias, name: uniqueName, phone: '000000000', orientation, ...medidas }))
       if (displayRoomUuid) {
         // Esta copia sólo se MIRA en el Monitor de recepción (nunca se imprime), así que
         // va reducida: manda la mitad de bytes por pedido sin tocar la que se imprime.
@@ -776,9 +861,19 @@ export default function MobileApp() {
 
     // El e-mail lleva sólo las primeras miniaturas (ya generadas al importar): con 80 fotos
     // el correo pesaría demasiado para mail(). `fotos` da el total real a recepción.
-    const notifyItems = fotos.slice(0, MAX_MINIATURAS_EMAIL).map(p => ({ thumbnail: p.thumb || p.dataUrl, copies: 1 }))
+    const notifyItems = fotos.slice(0, MAX_MINIATURAS_EMAIL).map(p => ({ thumbnail: p.thumb || p.dataUrl, copies: p.copies || 1 }))
     try {
-      await notifyRoomOrder({ hotel: hotelId, room: normalizeEventCode(eventCode), items: notifyItems, fotos: total, total: amountPaid ?? totalPrice(), paymentMethod })
+      await notifyRoomOrder({
+        hotel: hotelId,
+        room: normalizeEventCode(eventCode),
+        items: notifyItems,
+        fotos: total,
+        copias: totalCopies,
+        // Recepción tiene que saberlo: es quien entrega el álbum en mano.
+        album: albumConseguido,
+        total: amountPaid ?? totalPrice(),
+        paymentMethod,
+      })
     } catch (e) {
       console.error('notifyRoomOrder error:', e)
     }
@@ -835,16 +930,22 @@ export default function MobileApp() {
   if (step === STEP_GALLERY) {
     return (
       <div className="mobile-app">
-        <div className="mobile-header d-flex align-items-center gap-3 justify-content-between">
-          <img src={hotelLogoUrl(hotelId)} alt="Logo" className="mobile-header-ic-launcher-large" />
-          <div className="flex-grow-1">
-            {eventCode && <div className="mobile-room-badge">{roomLabel}</div>}
-            <div className="mobile-header-title"><span style={{fontSize:'1.2rem',marginRight:'6px'}}>🇪🇸</span> Sube o haz tus fotos para imprimir<br /><small className="text-muted"><span style={{fontSize:'1rem',marginRight:'6px'}}>🇬🇧</span> Upload or take your photos to print</small></div>
+        {/* Marca arriba y centrada, debajo una fila con el logo del hotel, el texto en dos
+            idiomas y la (i); la habitación cierra la cabecera. Subir fotos ya no vive aquí:
+            tiene su propio botón flotante, que es donde la mano llega. */}
+        <div className="mobile-header">
+          <img src="/assets/hostyprint-logo.png" alt="HostyPrint" className="mobile-brand-logo" />
+          <div className="mobile-header-fila">
+            <img src={hotelLogoUrl(hotelId)} alt="" className="mobile-header-hotel-logo" />
+            <div className="mobile-header-title">
+              <span className="mobile-header-bandera">🇪🇸</span> Sube o haz tus fotos para imprimir
+              <br />
+              <small className="text-muted"><span className="mobile-header-bandera">🇬🇧</span> Upload or take your photos to print</small>
+            </div>
+            <button className="mobile-header-info" title="Información y condiciones" onClick={() => setShowTermsModal(true)}><i className="bi bi-info-circle" /></button>
           </div>
+          {eventCode && <div className="mobile-room-badge">{roomLabel}</div>}
           <input ref={galleryFileInputRef} type="file" accept="image/*" multiple style={{ display: 'none' }} onChange={handleGalleryFilesSelected} />
-          <button className="btn btn-sm btn-outline-warning" title="Subir de tu galería" style={{fontSize:'18px',padding:'2px 6px'}} onClick={() => galleryFileInputRef.current?.click()}><i className="bi bi-images" /></button>
-          {CAMARA_HABILITADA && <button className="btn btn-sm btn-outline-warning" title="Hacer foto" style={{fontSize:'18px',padding:'2px 6px'}} onClick={() => setStep(STEP_CAMERA)}><i className="bi bi-camera" /></button>}
-          <button className="btn btn-sm btn-outline-warning" title="Términos" style={{fontSize:'18px',padding:'2px 6px'}} onClick={() => setShowTermsModal(true)}><i className="bi bi-info-circle" /></button>
         </div>
         {fotosOmitidas.length > 0 && (
           <div className="mobile-warning-box">
@@ -861,7 +962,6 @@ export default function MobileApp() {
         )}
         {capturedPhotos.length === 0 ? (
           <div className="gallery-empty-state">
-            <i className="bi bi-camera" />
             <p>Sube una foto de tu galería para imprimirla en recepción.</p>
             <div className="gallery-empty-actions">
               <button className="btn btn-outline-warning fw-bold" onClick={() => galleryFileInputRef.current?.click()}><i className="bi bi-images me-2" />Subir foto</button>
@@ -877,8 +977,28 @@ export default function MobileApp() {
             ))}
           </div>
         )}
+        {/* Pila flotante: añadir fotos arriba, el regalo justo encima del pedido. */}
         {capturedPhotos.length > 0 && (
-          <div className="order-float-button">
+          <div className="mobile-float-stack">
+            <button className="btn btn-outline-warning fw-bold float-add-btn" onClick={() => galleryFileInputRef.current?.click()}>
+              <i className="bi bi-plus-circle me-2" />Añadir más fotos
+            </button>
+            {albumActivo && (
+              <button
+                className={`album-float ${albumConseguido ? 'album-float-hecho' : ''}`}
+                onClick={() => !albumConseguido && galleryFileInputRef.current?.click()}
+              >
+                <span className="album-float-icono"><i className={`bi ${albumConseguido ? 'bi-gift-fill' : 'bi-gift'}`} /></span>
+                <span className="album-float-texto">
+                  {albumConseguido
+                    ? <b>¡Álbum de regalo conseguido!</b>
+                    : <><b>Álbum de regalo</b><span> te faltan {albumRestantes} foto{albumRestantes > 1 ? 's' : ''}</span></>}
+                </span>
+                <span className="album-float-barra">
+                  <span className="album-float-relleno" style={{ width: `${Math.min(100, Math.round((totalCopies / COPIAS_PARA_ALBUM) * 100))}%` }} />
+                </span>
+              </button>
+            )}
             <button className="btn btn-warning w-100 fw-bold shadow-lg" onClick={() => setStep(STEP_ORDER)}>
               <i className="bi bi-bag-check me-2" />Ver pedido ({capturedPhotos.length} foto{capturedPhotos.length > 1 ? 's' : ''})
             </button>
@@ -892,9 +1012,10 @@ export default function MobileApp() {
                 <p><strong>¿Cómo funciona?</strong></p>
                 <ol style={{paddingLeft:'1.1rem',margin:'0 0 12px'}}>
                   <li>Pulsa <strong>Subir foto</strong> y elige las fotos de tu móvil (hasta {MAX_FOTOS} por pedido).</li>
-                  <li>Se imprime <strong>una copia de cada foto</strong>, a {pricePerPhoto().toFixed(2)}&nbsp;€ la unidad.</li>
+                  <li>Elige cuántas <strong>copias</strong> quieres de cada una, a {precioCopia().toFixed(2)}&nbsp;€ la copia.</li>
                   <li>Paga con <strong>tarjeta</strong> o <strong>PayPal</strong>.</li>
                   <li>Recoge tus fotos impresas en <strong>recepción</strong>.</li>
+                  <li>Con <strong>{COPIAS_PARA_ALBUM} fotos o más</strong> te regalamos un <strong>álbum</strong>, que recoges en recepción con tu pedido.</li>
                 </ol>
 
                 <p><strong>¿Qué es un cupón?</strong></p>
@@ -981,7 +1102,15 @@ export default function MobileApp() {
               <div className="order-photo-info">
                 <div className="order-photo-label">Tu foto</div>
                 <div className="order-copies-selector">
-                  <span className="order-price">{pricePerPhoto().toFixed(2)}€</span>
+                  <span className="order-copies-label">Copias</span>
+                  <div className="copias-stepper">
+                    <span className="copias-stepper-valor">{photo.copies || 1}</span>
+                    <span className="copias-stepper-flechas">
+                      <button type="button" aria-label="Una copia más" disabled={(photo.copies || 1) >= MAX_COPIAS} onClick={() => cambiarCopias(photo.id, 1)}><i className="bi bi-chevron-up" /></button>
+                      <button type="button" aria-label="Una copia menos" disabled={(photo.copies || 1) <= 1} onClick={() => cambiarCopias(photo.id, -1)}><i className="bi bi-chevron-down" /></button>
+                    </span>
+                  </div>
+                  <span className="order-price">{priceForPhoto(photo.copies).toFixed(2)}€</span>
                 </div>
               </div>
               <button className="btn btn-sm btn-outline-danger order-delete-btn" onClick={() => removeCaptured(photo.id)}><i className="bi bi-trash" /></button>
@@ -998,6 +1127,29 @@ export default function MobileApp() {
               <span className="order-total-amount">{totalPrice()}€</span>
             )}
           </div>
+
+          {albumActivo && (
+            <div className={`album-promo ${albumConseguido ? 'album-promo-hecho' : ''}`}>
+              <div className="album-promo-fila">
+                <span className="album-promo-icono"><i className={`bi ${albumConseguido ? 'bi-gift-fill' : 'bi-gift'}`} /></span>
+                <div className="album-promo-texto">
+                  {albumConseguido ? (
+                    <><b>¡Álbum de regalo incluido!</b><span> Lo recoges en recepción junto con tus fotos.</span></>
+                  ) : (
+                    <><b>Añade {albumRestantes} foto{albumRestantes > 1 ? 's' : ''} más</b><span> y te llevas un álbum de regalo</span></>
+                  )}
+                </div>
+              </div>
+              <div className="album-promo-barra">
+                <div className="album-promo-relleno" style={{ width: `${Math.min(100, Math.round((totalCopies / COPIAS_PARA_ALBUM) * 100))}%` }} />
+              </div>
+              {!albumConseguido && (
+                <button className="album-promo-accion" onClick={() => setStep(STEP_GALLERY)}>
+                  <i className="bi bi-plus-circle me-1" />Añadir más fotos
+                </button>
+              )}
+            </div>
+          )}
 
           {/* Panel de cupón (descuento o pago completo) */}
           <div className="payment-methods-section">
@@ -1040,7 +1192,7 @@ export default function MobileApp() {
                   <p className="fw-bold mt-2 mb-1">No tienes que pagar nada</p>
                   <p className="text-muted mb-3" style={{ fontSize: 14 }}>Tu cupón cubre el pedido completo.</p>
                   {squareError && <div className="text-danger mb-2">{squareError}</div>}
-                  <button className="btn btn-warning w-100 fw-bold payment-btn" onClick={handleFreeOrder} disabled={squareLoading || capturedPhotos.length === 0}>
+                  <button className="btn btn-warning w-100 fw-bold payment-btn" onClick={handleFreeOrder} disabled={squareLoading || totalCopies === 0}>
                     {squareLoading ? <><span className="spinner-border spinner-border-sm me-2" />Enviando…</> : <><i className="bi bi-send me-2" />Enviar pedido</>}
                   </button>
                 </div>
@@ -1066,7 +1218,7 @@ export default function MobileApp() {
                     <div className="payment-method-content">
                       <div id="card-container" style={{ minHeight: '150px' }}></div>
                       {squareError && <div className="text-danger text-center mt-2">{squareError}</div>}
-                      <button className="btn btn-warning w-100 mt-3 fw-bold payment-btn" onClick={handleSquarePayment} disabled={squareLoading || !squareCard || capturedPhotos.length === 0}>
+                      <button className="btn btn-warning w-100 mt-3 fw-bold payment-btn" onClick={handleSquarePayment} disabled={squareLoading || !squareCard || totalCopies === 0}>
                         {squareLoading ? <><span className="spinner-border spinner-border-sm me-2" />Procesando…</> : `Pagar ${finalPrice}€`}
                       </button>
                       <p className="pay-method-note"><i className="bi bi-shield-lock me-1" />Visa · Mastercard · American Express</p>
@@ -1110,8 +1262,18 @@ export default function MobileApp() {
         <img src={hotelLogoUrl(hotelId)} alt="Success" className="success-image" />
         <h2 className="success-title">¡Pedido enviado!</h2>
         <p className="success-text">Tu pedido ha sido enviado. Tus fotos se imprimirán en breve.</p>
+        {albumConseguido && (
+          <div className="album-promo album-promo-hecho album-promo-exito">
+            <div className="album-promo-fila">
+              <span className="album-promo-icono"><i className="bi bi-gift-fill" /></span>
+              <div className="album-promo-texto">
+                <b>Tu álbum de regalo te espera</b><span> Recógelo en recepción con tus fotos.</span>
+              </div>
+            </div>
+          </div>
+        )}
         <p className="success-small-text">¡Gracias por tu compra!</p>
-        <button className="btn btn-outline-warning back-button" onClick={() => { setStep(STEP_GALLERY); setCapturedPhotos([]); setAppliedCoupon(null); setDiscountAmount(0); setCouponCode(''); }}>
+        <button className="btn btn-outline-warning back-button" onClick={() => { borrarPedido(); setStep(STEP_GALLERY); setCapturedPhotos([]); setAppliedCoupon(null); setDiscountAmount(0); setCouponCode(''); }}>
           <i className="bi bi-check-circle me-2" />Finalizar
         </button>
         {textos?.empresa && <p className="company-footer"><i className="bi bi-camera me-1" />{textos.empresa}</p>}

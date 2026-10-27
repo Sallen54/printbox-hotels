@@ -40,9 +40,16 @@ RewriteRule ^ https://%{HTTP_HOST}%{REQUEST_URI} [R=301,L]
 Header always set Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net https://web.squarecdn.com https://js.squareup.com https://www.paypal.com https://www.paypalobjects.com https://*.paypal.com; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://fonts.googleapis.com https://web.squarecdn.com https://*.squarecdn.com; font-src 'self' data: https://fonts.gstatic.com https://cdn.jsdelivr.net https://web.squarecdn.com https://*.squarecdn.com https://d1g145x70srn7h.cloudfront.net; img-src 'self' data: blob: https:; media-src 'self' blob:; worker-src 'self' blob:; connect-src 'self' https://cdn.jsdelivr.net https://connect.squareup.com https://pci-connect.squareup.com https://*.squareup.com https://*.squarecdn.com https://api-m.paypal.com https://api-m.sandbox.paypal.com https://www.paypal.com https://*.paypal.com; frame-src https://web.squarecdn.com https://*.squareup.com https://www.paypal.com https://*.paypal.com; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'self'"
 
 # Cabeceras de seguridad que faltaban
+# Sin listados de directorio: sin esto, entrar a /assets/ o /config/ podía devolver el
+# índice con todos los ficheros (y con ello los nombres de lo que hay dentro).
+Options -Indexes
+
 Header always set X-Content-Type-Options "nosniff"
 Header always set Referrer-Policy "strict-origin-when-cross-origin"
 Header always set X-Frame-Options "SAMEORIGIN"
+# La web solo necesita la cámara (foto del huésped); el resto de permisos del navegador se
+# deniegan para que un script inyectado no pueda pedirlos.
+Header always set Permissions-Policy "camera=(self), microphone=(), geolocation=(), payment=(self), usb=(), magnetometer=(), accelerometer=()"
 # HSTS solo cuando la petición llega por HTTPS (si no, no tiene efecto y evita dejar
 # clavado el sitio en https si alguien lo sirve por http en pruebas). Se usa SetEnvIf
 # en vez de <If> porque <If> solo existe en Apache 2.4 y rompería con un 500 en 2.2.

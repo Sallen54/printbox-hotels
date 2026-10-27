@@ -130,6 +130,9 @@ function getSquareCredentials() {
   return { accessToken, locationId }
 }
 
+// Tope de copias de una misma foto; el móvil usa el mismo número.
+const MAX_COPIAS = 20
+
 // ── Validación del importe en el SERVIDOR ──
 // El cliente manda el importe, pero no se puede confiar en él (DevTools/curl). Se
 // recalcula aquí a partir de los precios del hotel y el desglose de copias que
@@ -156,7 +159,8 @@ function readHotelPrices(hotelId) {
 function checkAmount(req, amountCents) {
   const hotelId = getSessionHotelId(req, baseConfigDir) || req.body?.order?.hotel || req.query.hotel || ''
   const p = readHotelPrices(hotelId)
-  const priceFor = (c) => [0, p.precio1, p.precio2, p.precio3][Math.min(Math.max(parseInt(c) || 0, 0), 3)] || 0
+  // Precio POR COPIA, igual que proxy.php: N copias cuestan N x precio1, sin tope de 3.
+  const priceFor = (c) => Math.min(Math.max(parseInt(c) || 0, 0), MAX_COPIAS) * p.precio1
   const copies = req.body?.order?.copies
 
   if (Array.isArray(copies) && copies.length) {
@@ -172,7 +176,7 @@ function checkAmount(req, amountCents) {
   }
 
   // Cliente antiguo sin desglose: al menos que no se pueda pagar 1 céntimo.
-  const min = Math.round(Math.min(p.precio1, p.precio2, p.precio3) * 100)
+  const min = Math.round(p.precio1 * 100)
   return amountCents >= min ? { ok: true } : { ok: false, error: 'Importe inferior al mínimo configurado' }
 }
 

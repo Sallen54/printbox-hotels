@@ -217,9 +217,10 @@ printbox-hotels/
 
 1. El huésped escanea el QR de su habitación (o recibe la URL) → entra directo a la galería, sin escribir ningún código.
 2. Pulsa **Subir foto**, que abre el selector nativo del móvil (desde ahí puede elegir una foto guardada o hacer una en el momento). El botón de cámara propio está desactivado (`CAMARA_HABILITADA = false`), aunque su código se conserva. **La foto se sube al original, sin redimensionar**, para no perder calidad de impresión; sólo se genera una miniatura para la pantalla y el e-mail.
-3. "Ver pedido" → ve el desglose: **una copia de cada foto** al precio unitario del hotel (por defecto 1,20 €). No hay selector de copias; el tope por pedido son **80 fotos** (`MAX_FOTOS` en [src/mobile/MobileApp.jsx](src/mobile/MobileApp.jsx)).
+3. "Ver pedido" → elige **cuántas copias** quiere de cada foto con un selector de flechas (hasta 20). Se cobra **por copia**: a 1,20 €, cinco copias son 6,00 €. El tope por pedido son **80 fotos** (`MAX_FOTOS` en [src/mobile/MobileApp.jsx](src/mobile/MobileApp.jsx)).
 4. Elige método (**Tarjeta** o **PayPal**) y paga. Si aplica un cupón que cubre el total, no se muestra pasarela: solo un botón de **Enviar pedido**.
-5. Al completar el envío, **recepción recibe automáticamente el e-mail** con las primeras miniaturas, el número de fotos y el resumen del pago (ver sección 7).
+5. Si el pedido llega a **35 copias**, se lleva un **álbum de regalo**: el móvil lo muestra con una barra de progreso y el e-mail a recepción avisa en grande de que hay que entregarlo (`COPIAS_PARA_ALBUM` en [src/mobile/MobileApp.jsx](src/mobile/MobileApp.jsx); a `0` se desactiva).
+6. Al completar el envío, **recepción recibe automáticamente el e-mail** con las primeras miniaturas, el número de fotos y el resumen del pago (ver sección 7).
 6. Las fotos quedan pendientes de imprimir en el Monitor/Printer de recepción.
 
 ### 6.2 Monitor / Admin — `/viewer`
@@ -241,7 +242,7 @@ Igual que en Adventures: hace polling de las fotos marcadas para imprimir, gener
 ```
 
 - El thumbnail se genera **en el propio móvil**, a partir de la foto que ya se está enviando (no se pide nada a ninguna API externa).
-- Cada foto va con `copies: 1`; el pedido viaja al servidor como lista de copias porque la validación del importe (`pbhCheckAmountCents`) sigue recalculando con esa tabla.
+- Cada foto va con sus `copies` (1-3); el pedido viaja al servidor como lista de copias y la validación del importe (`pbhCheckAmountCents`) recalcula con la tabla `[0, precio1, precio2, precio3]`.
 - En un pedido grande el e-mail lleva **sólo las 12 primeras miniaturas** + el total real (`fotos`), y resume el resto con "y N fotos más". Con 80 miniaturas el correo no pasaría por `mail()`.
 
 ### En producción (IONOS / `proxy.php`)

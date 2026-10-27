@@ -92,6 +92,21 @@ router.get('/', (req, res) => {
   }
 })
 
+// Misma regla que proxy.php: los ajustes reservados a Printbox exigen contraseña, aunque
+// la sesión sea válida. La del navegador solo decide si se enseñan los campos.
+const CLAVE_AJUSTES_DEFECTO = 'HostyPrint2026@'
+
+function claveAjustes(base) {
+  try {
+    const f = path.join(base, 'printbox_pass.txt')
+    if (fs.existsSync(f)) {
+      const clave = fs.readFileSync(f, 'utf8').trim()
+      if (clave) return clave
+    }
+  } catch {}
+  return CLAVE_AJUSTES_DEFECTO
+}
+
 router.post('/', (req, res) => {
   try {
     const base = getBaseConfigDir(req)
@@ -99,7 +114,33 @@ router.post('/', (req, res) => {
     if (!hotelId) return res.status(401).json({ error: 'No autenticado' })
     const CONFIG_DIR = resolveHotelDir(base, hotelId, { create: true })
     fs.ensureDirSync(CONFIG_DIR)
-    const { config, textos, habitaciones } = req.body
+    const { config, textos, habitaciones, adminPass } = req.body
+
+    // ¿Se tocan los ajustes reservados? Se comparan con lo guardado: si no cambian, no hace
+    // falta contraseña y recepción puede seguir guardando habitaciones, textos o el email.
+    const leerPrevio = () => {
+      const previo = { evento_printer: '', servidor: '', precio1: '' }
+      try {
+        for (const l of fs.readFileSync(path.join(CONFIG_DIR, 'servidor_api.txt'), 'utf8').split(/\r?\n/)) {
+          const i = l.indexOf(';')
+          if (i > 0 && previo[l.slice(0, i)] !== undefined) previo[l.slice(0, i)] = l.slice(i + 1).trim()
+        }
+      } catch {}
+      try {
+        for (const l of fs.readFileSync(path.join(CONFIG_DIR, 'textos.txt'), 'utf8').split(/\r?\n/)) {
+          if (l.startsWith('precio1:')) previo.precio1 = l.slice('precio1:'.length).trim()
+        }
+      } catch {}
+      return previo
+    }
+    const previo = leerPrevio()
+    const cambiaReservado =
+      (config && ['evento_printer', 'servidor'].some(k => config[k] !== undefined && String(config[k]).trim() !== previo[k])) ||
+      (textos?.precio1 !== undefined && Math.abs(parseFloat(textos.precio1) - parseFloat(previo.precio1 || 0)) > 0.0001)
+
+    if (cambiaReservado && String(adminPass || '') !== claveAjustes(base)) {
+      return res.status(403).json({ error: 'El evento de impresión, el precio y la URL del servidor necesitan la contraseña de Printbox' })
+    }
 
     if (habitaciones !== undefined) {
       fs.writeFileSync(

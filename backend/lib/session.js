@@ -75,14 +75,26 @@ function readHotels(baseConfigDir) {
         const m = block.match(new RegExp(`<${name}>([\\s\\S]*?)</${name}>`))
         return m ? m[1].trim() : ''
       }
+      // Todas las etiquetas con ese nombre, en orden (un hotel puede tener varias cuentas).
+      const tags = (block, name) =>
+        [...block.matchAll(new RegExp(`<${name}>([\\s\\S]*?)</${name}>`, 'g'))].map(x => x[1].trim())
+
       for (const m of xml.matchAll(/<hotel\s+id="([^"]+)"\s*>([\s\S]*?)<\/hotel>/g)) {
         const id = m[1].trim()
         if (!id) continue
+        const usuarios = tags(m[2], 'usuario')
+        const passes = tags(m[2], 'pass')
+        const hashes = tags(m[2], 'passHash')
+        const cuentas = usuarios
+          .map((user, i) => ({ user, pass: passes[i] || '', passHash: hashes[i] || '' }))
+          .filter(c => c.user)
         hotels[id] = {
           nombre: tag(m[2], 'nombre'),
-          user: tag(m[2], 'usuario'),
-          pass: tag(m[2], 'pass'),
-          passHash: tag(m[2], 'passHash'),
+          cuentas,
+          // Compatibilidad con el formato antiguo de un solo usuario por hotel.
+          user: cuentas[0]?.user || '',
+          pass: cuentas[0]?.pass || '',
+          passHash: cuentas[0]?.passHash || '',
         }
       }
       return hotels

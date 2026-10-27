@@ -154,7 +154,8 @@ export default function PrinterApp() {
 
     const newConfig = { ...config, evento_printer: fullCode }
     setConfig(newConfig)
-    await saveConfig(newConfig, textos)
+    // El evento de impresión es un ajuste reservado: el servidor exige la contraseña.
+    await saveConfig(newConfig, textos, eventPass)
     addLog(`✓ Evento de impresora configurado: ${fullCode}`, 'success')
   }
 

@@ -13,6 +13,9 @@ const defaultPrivacyContent = `
 
 // Traba para el personal del hotel (que ya entró con su sesión), no un secreto: va en el bundle.
 const ADVANCED_PASSWORD = 'HostyPrint2026@'
+
+// Backend de Printbox por defecto; se puede apuntar a otro desde los ajustes protegidos.
+const SERVIDOR_POR_DEFECTO = 'http://gestion.printboxweb.com'
 const PRECIO_FOTO_DEFAULT = '1.20'
 
 // Los QR van siempre a https (salvo en local): con http, Square no carga en el móvil.
@@ -69,6 +72,9 @@ export default function ViewerApp() {
   const [adminEventCode, setAdminEventCode] = useState('')
   const [adminPrinterEventCode, setAdminPrinterEventCode] = useState('')
   const [adminPrecioFoto, setAdminPrecioFoto] = useState('')
+  const [adminServidor, setAdminServidor] = useState('')
+  // Contraseña de Printbox tal y como la escribió el usuario (en memoria, nunca se guarda).
+  const claveAjustesRef = useRef('')
   // Campos sensibles (evento de impresión y precio) tras contraseña fija de Printbox.
   const [advancedUnlocked, setAdvancedUnlocked] = useState(false)
   const [showUnlockModal, setShowUnlockModal] = useState(false)
@@ -203,7 +209,13 @@ export default function ViewerApp() {
     setShowEventModal(false)
     const newConfig = { ...config, evento: fullCode }
     setConfig(newConfig)
-    await saveConfig(newConfig, textos).catch(() => {})
+    // Antes se tragaba el error: si el guardado fallaba, al recargar volvía a la anterior
+    // sin decir nada.
+    try {
+      await saveConfig(newConfig, textos)
+    } catch (e) {
+      setError('No se pudo guardar la habitación elegida: ' + (e?.message || e))
+    }
   }
 
   // Lee un archivo de imagen y lo devuelve como dataURL PNG cuadrado-máx 512px
@@ -234,15 +246,25 @@ export default function ViewerApp() {
   // Editor de lista de habitaciones (compartido entre asistente y Admin)
   const updateRoomList = (setter) => ({
     add: () => setter(prev => [...prev, { nombre: '', codigo: '' }]),
-    remove: (idx) => setter(prev => prev.filter((_, i) => i !== idx)),
+    // Quitar la última deja una fila vacía en vez de bloquear el botón: si la única
+    // habitación registrada era un código equivocado, había que poder borrarla.
+    remove: (idx) => setter(prev => {
+      const resto = prev.filter((_, i) => i !== idx)
+      return resto.length ? resto : [{ nombre: '', codigo: '' }]
+    }),
     set: (idx, field, value) => setter(prev => prev.map((r, i) => i === idx ? { ...r, [field]: field === 'codigo' ? value.replace(/\D/g, '') : value } : r)),
   })
   const wizardRoomsEditor = updateRoomList(setWizardRooms)
   const adminRoomsEditor = updateRoomList(setAdminRooms)
 
-  const validRooms = (rooms) => rooms
-    .map(r => ({ nombre: r.nombre.trim(), codigo: r.codigo.trim() }))
-    .filter(r => r.codigo)
+  // Defensivo a propósito: una habitación guardada por una versión anterior puede no traer
+  // `nombre`, o traer el código como número. Con `.trim()` directo eso reventaba la función
+  // entera y el botón Guardar se quedaba mudo.
+  const normalizeRoom = (r) => ({
+    nombre: String(r?.nombre ?? '').trim(),
+    codigo: String(r?.codigo ?? '').trim().replace(/^ev[-_]?/i, ''),
+  })
+  const validRooms = (rooms) => (Array.isArray(rooms) ? rooms : []).map(normalizeRoom).filter(r => r.codigo)
 
   // Comprueba contra Laravel que el código existe, para avisar al escribir y no al guardar.
     const checkRoomCode = useCallback(async (codigo) => {
@@ -259,6 +281,8 @@ export default function ViewerApp() {
 
   function handleUnlockAdvanced() {
     if (unlockInput !== ADVANCED_PASSWORD) { setUnlockError('Contraseña incorrecta'); return }
+    // Se guarda para mandarla con el POST: la comprobación que vale es la del servidor.
+    claveAjustesRef.current = unlockInput
     setAdvancedUnlocked(true)
     setShowUnlockModal(false)
     setUnlockInput('')
@@ -320,11 +344,12 @@ export default function ViewerApp() {
     setAdminError('')
     setShowAdminConfig(true)
     setAdminHotelName(textos?.empresa && textos.empresa !== 'Printbox Hotels' ? textos.empresa : (textos?.empresa || ''))
-    setAdminRooms(habitaciones.length ? habitaciones.map(h => ({ ...h })) : [{ nombre: '', codigo: '' }])
+    setAdminRooms(habitaciones.length ? habitaciones.map(normalizeRoom) : [{ nombre: '', codigo: '' }])
     setAdminLogoData(null)
     setAdminEventCode(config?.evento?.replace('ev-', '') || '')
     setAdminPrinterEventCode(config?.evento_printer?.replace('ev-', '') || '')
     setAdminPrecioFoto(textos?.precio1 || PRECIO_FOTO_DEFAULT)
+    setAdminServidor(config?.servidor || '')
     setAdminEmailRecepcion(textos?.email_recepcion || '')
     setAdminServicioDisponible(config?.servicio_disponible !== false)
     setAdvancedUnlocked(false)
@@ -332,13 +357,34 @@ export default function ViewerApp() {
   }
 
   async function handleSaveAdminConfig() {
+    // TODO dentro del try: si algo revienta aquí, el usuario tiene que enterarse. Antes una
+    // excepción en la validación dejaba el botón sin hacer nada y parecía que la app se
+    // había colgado.
+    setAdminError('')
+    setAdminSaving(true)
+    try {
+      await guardarAdmin()
+    } catch (e) {
+      setAdminError('Error guardando: ' + (e?.message || e))
+    } finally {
+      setAdminSaving(false)
+    }
+  }
+
+  async function guardarAdmin() {
     const rooms = validRooms(adminRooms)
-    if (!rooms.length) { setAdminError('Añade al menos una habitación con su código'); return }
+    if (!rooms.length) throw new Error('Añade al menos una habitación con su código')
     const dup = duplicateRoomCode(rooms)
-    if (dup) { setAdminError(`Hay dos habitaciones con el mismo código (${dup}). Cada habitación debe tener un código distinto.`); return }
+    if (dup) throw new Error(`Hay dos habitaciones con el mismo código (${dup}). Cada habitación debe tener un código distinto.`)
     // La habitación monitorizada debe ser una de las registradas
     const monitorCode = rooms.some(r => r.codigo === adminEventCode) ? adminEventCode : rooms[0].codigo
-    const newConfig = { ...config, evento: `ev-${monitorCode}`, evento_printer: adminPrinterEventCode ? `ev-${adminPrinterEventCode}` : '', servicio_disponible: adminServicioDisponible }
+    // La URL se queda como esté si la dejan en blanco; una mal escrita dejaría el Monitor
+    // sin backend, así que se exige que al menos parezca una dirección http(s).
+    const servidor = String(adminServidor || '').trim().replace(/\/+$/, '') || SERVIDOR_POR_DEFECTO
+    if (!/^https?:\/\/[^\s]+$/i.test(servidor)) {
+      throw new Error(`La URL del servidor no es válida (${servidor}). Tiene que empezar por http:// o https://`)
+    }
+    const newConfig = { ...config, servidor, evento: `ev-${monitorCode}`, evento_printer: adminPrinterEventCode ? `ev-${adminPrinterEventCode}` : '', servicio_disponible: adminServicioDisponible }
     const newTextos = {
       text_es: textos?.text_es || '¡Consigue tu foto de la habitación!',
       text_en: textos?.text_en || 'Get your room photo!',
@@ -355,26 +401,20 @@ export default function ViewerApp() {
       empresa: adminHotelName.trim() || textos?.empresa || 'Printbox Hotels',
       email_recepcion: adminEmailRecepcion?.trim() || '',
     }
-    setAdminError('')
-    setAdminSaving(true)
-    try {
-      if (adminLogoData) {
-        await uploadHotelLogo(adminLogoData)
-        setLogoVersion(Date.now())
-      }
-      await saveHabitaciones(rooms)
-      // Sin eventCode: los textos/precios/email se guardan en el textos.txt global del hotel
-      const saveResult = await saveConfig(newConfig, newTextos)
-      if (saveResult.textos) { setTextos(saveResult.textos); localStorage.removeItem('printbox_viewer_state') }
-      if (saveResult.config) setConfig(saveResult.config)
-      setHabitaciones(rooms)
-      setAdminError('✓ Configuración guardada correctamente')
-      setTimeout(() => { setShowAdminConfig(false); setAdminError(''); setAdminLogoData(null) }, 1200)
-    } catch (e) {
-      setAdminError('Error guardando configuración: ' + e.message)
-    } finally {
-      setAdminSaving(false)
+    if (adminLogoData) {
+      await uploadHotelLogo(adminLogoData)
+      setLogoVersion(Date.now())
     }
+    await saveHabitaciones(rooms)
+    // Sin eventCode: los textos/precios/email se guardan en el textos.txt global del hotel
+    const saveResult = await saveConfig(newConfig, newTextos, claveAjustesRef.current)
+    if (saveResult.textos) { setTextos(saveResult.textos); localStorage.removeItem('printbox_viewer_state') }
+    if (saveResult.config) setConfig(saveResult.config)
+    setHabitaciones(rooms)
+    setAdminRooms(rooms.length ? rooms : [{ nombre: '', codigo: '' }])
+    setAdminEventCode(monitorCode)
+    setAdminError('✓ Configuración guardada correctamente')
+    setTimeout(() => { setShowAdminConfig(false); setAdminError(''); setAdminLogoData(null) }, 1200)
   }
 
   // ── FOTOS ──
@@ -505,7 +545,7 @@ export default function ViewerApp() {
 
   const currentRoomCode = (config?.evento || '').replace(/^ev-/, '')
   const currentRoom = habitaciones.find(h => h.codigo === currentRoomCode)
-  const currentRoomLabel = currentRoom?.nombre || (currentRoomCode ? `Hab. ${currentRoomCode}` : 'Habitación')
+  const currentRoomLabel = currentRoom?.nombre || currentRoomCode || 'Sin elegir'
 
   return (
     <div className="viewer-app d-flex flex-column bg-dark text-light" style={{ height: "100vh", overflow: "hidden" }}>
@@ -589,8 +629,22 @@ export default function ViewerApp() {
                   ))}
                 </div>
                 {eventError && <div className="text-danger mt-2" style={{ fontSize: '13px' }}>{eventError}</div>}
-                <p className="text-secondary mt-2 mb-0" style={{ fontSize: '12px' }}>¿Falta alguna habitación? Añádela desde <b>Admin</b>.</p>
-                {config?.evento && <button className="btn btn-secondary btn-sm mt-3" onClick={() => setShowEventModal(false)}>Cancelar</button>}
+                {!habitaciones.length && (
+                  <p className="text-warning mt-2 mb-0" style={{ fontSize: '13px' }}>
+                    Todavía no hay ninguna habitación registrada.
+                  </p>
+                )}
+                <p className="text-secondary mt-2 mb-0" style={{ fontSize: '12px' }}>
+                  ¿Falta alguna habitación, o hay una mal puesta?
+                </p>
+                <div className="d-flex gap-2 justify-content-center mt-2">
+                  {/* Salida de emergencia: si la única habitación registrada tiene un código
+                      que no existe, desde aquí se llega al Admin para corregirla. */}
+                  <button className="btn btn-warning btn-sm text-dark fw-bold" onClick={() => { setShowEventModal(false); openAdmin() }}>
+                    <i className="bi bi-gear me-1" />Editar habitaciones
+                  </button>
+                  {config?.evento && <button className="btn btn-secondary btn-sm" onClick={() => setShowEventModal(false)}>Cancelar</button>}
+                </div>
               </div>
             </div>
           </div>
@@ -629,7 +683,7 @@ export default function ViewerApp() {
                           </div>
                           <button className="btn btn-sm btn-outline-light" title="Ver QR de esta habitación" onClick={() => setQrRoom({ nombre: r.nombre, codigo: r.codigo })} disabled={!r.codigo}><i className="bi bi-qr-code" /></button>
                           <button className={`btn btn-sm ${adminEventCode === r.codigo && r.codigo ? 'btn-warning text-dark' : 'btn-outline-secondary'}`} title="Mostrar esta habitación en el monitor" onClick={() => r.codigo && setAdminEventCode(r.codigo)} disabled={!r.codigo}><i className="bi bi-display" /></button>
-                          <button className="btn btn-sm btn-outline-danger" title="Quitar" onClick={() => adminRoomsEditor.remove(i)} disabled={adminRooms.length === 1}><i className="bi bi-trash" /></button>
+                          <button className="btn btn-sm btn-outline-danger" title="Quitar esta habitación" onClick={() => adminRoomsEditor.remove(i)}><i className="bi bi-trash" /></button>
                         </div>
                       ))}
                     </div>
@@ -653,6 +707,14 @@ export default function ViewerApp() {
                           <label className="form-label text-light">Precio por foto (€)</label>
                           <input type="number" step="0.01" min="0" className="form-control bg-black border-secondary text-light" value={adminPrecioFoto} disabled={!advancedUnlocked} onChange={e => setAdminPrecioFoto(e.target.value)} />
                           <div className="form-text text-secondary">Se cobra por cada copia: 2 copias = el doble, 3 copias = el triple.</div>
+                        </div>
+                        <div className="col-md-12">
+                          <label className="form-label text-light">URL del servidor</label>
+                          <input type="url" placeholder={SERVIDOR_POR_DEFECTO} className="form-control bg-black border-secondary text-light font-mono" value={adminServidor} disabled={!advancedUnlocked} onChange={e => setAdminServidor(e.target.value)} />
+                          <div className="form-text text-secondary">
+                            Dónde está el backend de Printbox. Solo se toca si el servidor habitual falla o va saturado
+                            y hay que apuntar a otro. En blanco usa <code>{SERVIDOR_POR_DEFECTO}</code>.
+                          </div>
                         </div>
                       </div>
                       {!advancedUnlocked && <div className="form-text text-secondary mt-2">Estos ajustes los cambia Printbox. Pulsa <b>Desbloquear</b> e introduce la contraseña.</div>}
@@ -791,7 +853,7 @@ export default function ViewerApp() {
               <div className="modal-body p-4 text-center">
                 <i className="bi bi-key-fill text-warning" style={{ fontSize: 32 }} />
                 <h5 className="text-light mt-2 mb-1">Ajustes de Printbox</h5>
-                <p className="text-secondary mb-3" style={{ fontSize: 13 }}>Introduce la contraseña para cambiar el evento de impresión y el precio.</p>
+                <p className="text-secondary mb-3" style={{ fontSize: 13 }}>Introduce la contraseña para cambiar el evento de impresión, el precio y la URL del servidor.</p>
                 <input type="password" autoFocus className={`form-control bg-black border-secondary text-light ${unlockError ? 'is-invalid' : ''}`} value={unlockInput}
                   onChange={e => { setUnlockInput(e.target.value); setUnlockError('') }}
                   onKeyDown={e => { if (e.key === 'Enter') handleUnlockAdvanced(); if (e.key === 'Escape') setShowUnlockModal(false) }} />
@@ -917,9 +979,18 @@ export default function ViewerApp() {
         </nav>
       )}
       <footer className="viewer-footer">
+        {/* El pie es la chuleta de recepción cuando algo va mal: teléfono y correo de
+            soporte. El precio ya se ve en el móvil del huésped y el nombre del hotel está
+            en la cabecera. */}
         <div className="viewer-footer-content">
-          {textos?.precio1 && <span className="price-badge">PRECIO POR FOTO <span className="badge">{textos.precio1}€</span></span>}
-          {textos?.empresa && <span className="company-name">{textos.empresa}</span>}
+          <span className="soporte-label">Soporte</span>
+          <a className="soporte-dato" href="tel:+34622200390">
+            <i className="bi bi-telephone-fill" />622 200 390
+          </a>
+          <a className="soporte-dato" href="mailto:soporte@hostyprint.com">
+            <i className="bi bi-envelope-fill" />soporte@hostyprint.com
+          </a>
+          <img src="/assets/hostyprint-logo.png" alt="HostyPrint" className="soporte-logo" />
         </div>
       </footer>
     </div>

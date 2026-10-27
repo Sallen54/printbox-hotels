@@ -252,7 +252,9 @@ export async function getConfig(hotelId = '') {
   }
 }
 
-export async function saveConfig(config, textos) {
+// `adminPass` solo hace falta para los ajustes reservados a Printbox (evento de impresión,
+// precio y URL del servidor); el servidor la exige y no se fía de que el panel la validara.
+export async function saveConfig(config, textos, adminPass) {
   // Requiere sesión: el backend guarda SIEMPRE en la carpeta del hotel de la cookie.
   // IMPORTANTE: usar /config/ con barra final para evitar redirect 301 de Apache.
   // Sin la barra, Apache redirige /config → /config/ y el redirect convierte POST en GET,
@@ -262,7 +264,7 @@ export async function saveConfig(config, textos) {
     const res = await fetch(url, {
       method: 'POST', ...CREDS,
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ config, textos }),
+      body: JSON.stringify({ config, textos, adminPass }),
     })
     if (!res.ok) {
       console.error(`POST /config returned ${res.status}`)
@@ -343,12 +345,16 @@ export async function processPayment({ token, amount, currency = 'EUR', order })
   return data
 }
 
-export async function sendPhoto({ event, image, times = 1, name, phone, print, orientation }) {
+// `width`/`height` son las medidas reales de la imagen que se manda. La app Flutter las
+// envía como ImageWidth/ImageHeight y es la que imprime sin bordes, así que la web manda
+// exactamente lo mismo.
+export async function sendPhoto({ event, image, times = 1, name, phone, print, orientation, width, height }) {
   const body = { event, image, times }
   if (name) body.name = name
   if (typeof print !== 'undefined') body.print = print
   if (phone) body.phone = phone
   if (orientation) body.orientation = orientation
+  if (width && height) { body.ImageWidth = width; body.ImageHeight = height }
 
   const res = await fetch(`${BACKEND_URL}/printbox/photo-send`, {
     method: 'POST',
@@ -362,14 +368,15 @@ export async function sendPhoto({ event, image, times = 1, name, phone, print, o
 
 // Avisa a recepción por e-mail de que una habitación ha enviado fotos.
 // items: [{ thumbnail: 'data:image/jpeg;base64,...', copies: N }, ...] — una fila por foto del pedido (no por copia).
-export async function notifyRoomOrder({ hotel = '', room, items, fotos, total, paymentMethod }) {
+export async function notifyRoomOrder({ hotel = '', room, items, fotos, copias, album, total, paymentMethod }) {
   // El email de recepción se lee del hotel indicado (?hotel= lo resuelve el backend).
   const q = hotel ? `?hotel=${encodeURIComponent(hotel)}` : ''
   const res = await fetch(`${BACKEND_URL}/printbox/notify-order${q}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    // `items` puede traer sólo las primeras miniaturas; `fotos` es el total real del pedido.
-    body: JSON.stringify({ room: normalizeEventCode(room), items, fotos, total, paymentMethod }),
+    // `items` puede traer sólo las primeras miniaturas; `fotos` es el total real del pedido,
+    // `copias` las impresiones y `album` avisa de que hay que entregar el álbum de regalo.
+    body: JSON.stringify({ room: normalizeEventCode(room), items, fotos, copias, album, total, paymentMethod }),
   })
   const data = await res.json().catch(() => ({}))
   if (!res.ok) throw new Error(data?.error || 'Error al notificar a recepción')

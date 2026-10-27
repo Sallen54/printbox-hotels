@@ -100,10 +100,61 @@ body:has(.camera-container) {
 .mobile-header {
   background: var(--mv-cream);
   border-bottom: 3px solid var(--mv-gold);
-  padding: 12px 16px;
+  padding: 10px 16px 12px;
   position: sticky;
   top: 0;
   z-index: 100;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  text-align: center;
+}
+
+/* Marca del producto: manda en la cabecera, centrada y a un tamaño fijo para que no baile
+   entre hoteles (el logo de cada alojamiento va debajo, a la izquierda). */
+.mobile-brand-logo {
+  height: 30px;
+  width: auto;
+  display: block;
+}
+
+.mobile-header-fila {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  text-align: left;
+}
+
+.mobile-header-hotel-logo {
+  height: 42px;
+  width: 42px;
+  flex-shrink: 0;
+  border-radius: 12px;
+  border: 1px solid rgba(176, 138, 53, 0.45);
+  background: var(--mv-card);
+  object-fit: cover;
+}
+
+.mobile-header-info {
+  flex-shrink: 0;
+  width: 34px;
+  height: 34px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 19px;
+  color: var(--mv-gold-text);
+  background: transparent;
+  border: 1px solid rgba(176, 138, 53, 0.45);
+  border-radius: 50%;
+  padding: 0;
+}
+
+.mobile-header-bandera {
+  font-size: 1.05rem;
+  margin-right: 5px;
 }
 
 /* Header oscuro en la pantalla de cámara */
@@ -112,18 +163,9 @@ body:has(.camera-container) {
   border-bottom-color: rgba(201, 162, 75, 0.4);
 }
 
-.mobile-header-ic-launcher-large {
-  height: 45px;
-  width: auto;
-  aspect-ratio: 1;
-  border-radius: 50%;
-  border: 1px solid var(--mv-gold);
-  background: var(--mv-card);
-  object-fit: cover;
-  flex-shrink: 0;
-}
-
 .mobile-header-title {
+  flex: 1;
+  min-width: 0;
   font-size: 13.5px;
   font-weight: 500;
   color: var(--mv-text-dark);
@@ -137,6 +179,7 @@ body:has(.camera-container) {
 /* Distintivo con el número de habitación (del QR ?habitacion=) */
 .mobile-room-badge {
   display: inline-block;
+  align-self: center;
   background: var(--pb-accent, #c9a24b);
   color: #fff;
   font-weight: 700;
@@ -145,14 +188,6 @@ body:has(.camera-container) {
   border-radius: 999px;
   margin-bottom: 4px;
   white-space: nowrap;
-}
-
-.mobile-header-ic-launcher {
-  height: 18px;
-  width: auto;
-  margin: 0 6px;
-  vertical-align: middle;
-  border-radius: 3px;
 }
 
 /* ========== PANTALLA DE EVENTO (entrada) ========== */
@@ -308,13 +343,6 @@ body:has(.camera-container) {
   color: var(--mv-text-muted);
 }
 
-.gallery-empty-state i {
-  font-size: 48px;
-  color: var(--mv-gold);
-  display: block;
-  margin-bottom: 1rem;
-}
-
 .gallery-empty-state p {
   font-size: 15px;
   max-width: 280px;
@@ -343,7 +371,7 @@ body:has(.camera-container) {
 }
 
 /* ========== BARRA FLOTANTE DE PEDIDO ========== */
-.order-float-button {
+.mobile-float-stack {
   position: fixed;
   bottom: 24px;
   left: 50%;
@@ -353,11 +381,98 @@ body:has(.camera-container) {
   max-width: 420px;
 }
 
-.order-float-button .btn {
+/* Añadir fotos arriba, el regalo justo encima del pedido: lo más usado queda más a mano. */
+.mobile-float-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.mobile-float-stack > .btn {
   font-size: 16px;
   border-radius: 999px;
   padding: 14px 24px;
   box-shadow: 0 12px 28px rgba(64, 48, 20, 0.35) !important;
+}
+
+.float-add-btn {
+  background: var(--mv-card) !important;
+  font-size: 15px !important;
+  padding: 11px 20px !important;
+}
+
+/* ── Regalo, en formato pastilla flotante ── */
+.album-float {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 9px 14px 11px;
+  background: linear-gradient(135deg, #fffdf7 0%, #f6edda 100%);
+  border: 1px solid rgba(176, 138, 53, 0.5);
+  border-radius: 999px;
+  box-shadow: 0 10px 24px rgba(64, 48, 20, 0.28);
+  text-align: left;
+  overflow: hidden;
+}
+
+.album-float-icono {
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: var(--mv-gold);
+  color: #fffdf7;
+  font-size: 14px;
+}
+
+.album-float-texto {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  line-height: 1.25;
+  color: var(--mv-text-dark);
+}
+
+.album-float-texto b {
+  display: block;
+  font-weight: 600;
+}
+
+.album-float-texto span {
+  font-size: 11.5px;
+  color: var(--mv-text-muted);
+}
+
+/* La barra hace de borde inferior de la pastilla: informa sin ocupar sitio. */
+.album-float-barra {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 4px;
+  background: rgba(176, 138, 53, 0.18);
+}
+
+.album-float-relleno {
+  display: block;
+  height: 100%;
+  background: var(--mv-gold);
+  transition: width 0.35s ease;
+}
+
+.album-float-hecho {
+  background: linear-gradient(135deg, #f2fbf4 0%, #e2f4e7 100%);
+  border-color: rgba(25, 135, 84, 0.55);
+}
+
+.album-float-hecho .album-float-icono,
+.album-float-hecho .album-float-relleno {
+  background: #198754;
 }
 
 /* ========== CÁMARA (se mantiene oscura) ========== */
@@ -499,6 +614,67 @@ body:has(.camera-container) {
   align-items: center;
   gap: 0.5rem;
   margin-top: 0.35rem;
+}
+
+.order-copies-label {
+  font-size: 12px;
+  color: var(--mv-text-muted);
+}
+
+/* Número con dos flechas: sirve para cualquier cantidad, al contrario que los botones
+   1/2/3 de antes, que limitaban el pedido a tres copias por foto. */
+.copias-stepper {
+  display: flex;
+  align-items: stretch;
+  gap: 0;
+  border: 1px solid rgba(176, 138, 53, 0.45);
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--mv-card);
+}
+
+.copias-stepper-valor {
+  min-width: 34px;
+  padding: 0 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: 'DM Mono', monospace;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--mv-text-dark);
+}
+
+.copias-stepper-flechas {
+  display: flex;
+  flex-direction: column;
+  border-left: 1px solid rgba(176, 138, 53, 0.35);
+}
+
+.copias-stepper-flechas button {
+  width: 28px;
+  height: 17px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  font-size: 10px;
+  line-height: 1;
+  color: var(--mv-gold-text);
+  background: transparent;
+  border: none;
+}
+
+.copias-stepper-flechas button:first-child {
+  border-bottom: 1px solid rgba(176, 138, 53, 0.35);
+}
+
+.copias-stepper-flechas button:active {
+  background: rgba(176, 138, 53, 0.18);
+}
+
+.copias-stepper-flechas button:disabled {
+  opacity: 0.3;
 }
 
 .order-price {
@@ -1059,4 +1235,98 @@ body:has(.camera-container) {
   line-height: 1;
   color: #5a4300;
   padding: 0 4px;
+}
+
+/* ========== REGALO POR VOLUMEN (álbum) ==========
+   Objetivo visible pero que no interrumpe: una tira fina con barra de progreso que solo
+   aparece cuando ya hay fotos en el pedido. Al conseguirlo cambia a verde. */
+.album-promo {
+  margin: 12px 16px 0;
+  padding: 10px 12px;
+  background: linear-gradient(135deg, #fffdf7 0%, #f8f1e2 100%);
+  border: 1px solid rgba(176, 138, 53, 0.35);
+  border-radius: 14px;
+  box-shadow: 0 2px 10px rgba(64, 48, 20, 0.06);
+}
+
+.album-promo-fila {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.album-promo-icono {
+  flex-shrink: 0;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: var(--mv-gold);
+  color: #fffdf7;
+  font-size: 15px;
+}
+
+.album-promo-texto {
+  font-size: 13px;
+  line-height: 1.35;
+  color: var(--mv-text-dark);
+}
+
+.album-promo-texto b {
+  display: block;
+  font-weight: 600;
+}
+
+.album-promo-texto span {
+  color: var(--mv-text-muted);
+  font-size: 12px;
+}
+
+.album-promo-barra {
+  height: 5px;
+  margin-top: 8px;
+  border-radius: 999px;
+  background: rgba(176, 138, 53, 0.18);
+  overflow: hidden;
+}
+
+.album-promo-relleno {
+  height: 100%;
+  border-radius: 999px;
+  background: var(--mv-gold);
+  transition: width 0.35s ease;
+}
+
+.album-promo-accion {
+  width: 100%;
+  margin-top: 10px;
+  padding: 7px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--mv-gold-text);
+  background: transparent;
+  border: 1px dashed rgba(176, 138, 53, 0.5);
+  border-radius: 10px;
+}
+
+/* Conseguido */
+.album-promo-hecho {
+  background: linear-gradient(135deg, #f2fbf4 0%, #e6f6ea 100%);
+  border-color: rgba(25, 135, 84, 0.45);
+}
+
+.album-promo-hecho .album-promo-icono {
+  background: #198754;
+}
+
+.album-promo-hecho .album-promo-relleno {
+  background: #198754;
+}
+
+.album-promo-exito {
+  margin: 0 0 14px;
+  max-width: 340px;
+  text-align: left;
 }

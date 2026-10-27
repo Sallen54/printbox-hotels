@@ -151,7 +151,7 @@ router.post('/otp/validate', async (req, res) => {
 
 router.post('/photo-send', async (req, res) => {
   try {
-    const { event, image, times = 1, name, phone, print, orientation } = req.body
+    const { event, image, times = 1, name, phone, print, orientation, ImageWidth, ImageHeight } = req.body
     const payload = {
       event,
       image,
@@ -161,6 +161,8 @@ router.post('/photo-send', async (req, res) => {
     }
     if (phone) payload.phone = phone
     if (orientation) payload.orientation = orientation
+    // Medidas reales de la imagen, igual que las manda la app Flutter.
+    if (ImageWidth && ImageHeight) { payload.ImageWidth = ImageWidth; payload.ImageHeight = ImageHeight }
 
     const csrfToken = await getCsrfToken()
     const r = await fetchWithCookies(`${BASE}/api/v1/events/photo/send`, {
@@ -186,10 +188,12 @@ router.post('/photo-send', async (req, res) => {
 // así que aquí solo se deja constancia en consola. Igual que la cámara (solo funciona en
 // HTTPS de producción), es una limitación conocida y documentada del entorno de desarrollo.
 router.post('/notify-order', async (req, res) => {
-  const { room, items = [], fotos, total, paymentMethod } = req.body
+  const { room, items = [], fotos, copias, album, total, paymentMethod } = req.body
   // `items` puede traer solo las primeras miniaturas de un pedido grande; `fotos` es el total.
   const numFotos = Math.max(items.length, Number(fotos) || 0)
-  console.log(`[notify-order] Habitación ${room} envió ${numFotos} foto(s) — total ${total}€ (${paymentMethod}). ` +
+  const numCopias = Math.max(numFotos, Number(copias) || 0)
+  console.log(`[notify-order] Habitación ${room} envió ${numFotos} foto(s) / ${numCopias} copia(s) — ` +
+    `total ${total}€ (${paymentMethod})${album ? ' — ¡ÁLBUM DE REGALO!' : ''}. ` +
     `Miniaturas en el aviso: ${items.length}. [DEV] No se envía e-mail real, solo se loguea.`)
   res.json({ ok: true, devStub: true })
 })
