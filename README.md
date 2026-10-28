@@ -225,7 +225,22 @@ printbox-hotels/
 
 ### 6.2 Monitor / Admin — `/viewer`
 
-Pantalla para recepción: elige la habitación y ve la galería de fotos que suben los huéspedes (al pulsar una se abre a pantalla grande). **Solo visor: no imprime ni cobra** — de eso se encarga el móvil del huésped. Desde **Configuración** (contraseña) ajusta precio, empresa y **el e-mail de recepción** del hotel, y genera cupones.
+Pantalla para recepción: elige la habitación y ve la galería de fotos que suben los huéspedes (al pulsar una se abre a pantalla grande). **Solo visor: no imprime ni cobra** — de eso se encarga el móvil del huésped. Desde **Admin** se configuran las habitaciones, el nombre, el logo, **el e-mail de recepción** y los cupones.
+
+#### Ajustes reservados a Printbox
+
+Tres campos del Admin van detrás de la contraseña de Printbox (`HostyPrint2026@` por defecto):
+
+| Campo | Para qué |
+|---|---|
+| **Evento de impresión** | Evento de Laravel al que van las fotos a imprimir |
+| **Precio por foto** | Lo que cuesta cada copia (por defecto 1,20 €) |
+| **URL del servidor** | Dónde está el backend de Printbox. Se cambia si el servidor habitual falla o va saturado y hay que apuntar a otro. En blanco usa `http://gestion.printboxweb.com`; se exige que empiece por `http://` o `https://` |
+
+La contraseña **no basta con validarla en el panel**: el servidor la vuelve a comprobar en
+`POST /config` y responde 403 sin ella, porque la del navegador viaja en el bundle y cualquiera
+puede leerla. Para cambiarla en un despliegue, crea `config/printbox_pass.txt` con la nueva
+(está en `.gitignore` y `config/.htaccess` impide servirlo por HTTP).
 
 ### 6.3 Printer — `/printer`
 

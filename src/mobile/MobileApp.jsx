@@ -74,8 +74,41 @@ function formatoDe(file) {
   return tipo ? tipo.toUpperCase() : 'desconocido'
 }
 
+// Recorta al formato del papel quedándose con el centro de la imagen (equivale al
+// `BoxFit.cover` de Flutter). Mantiene la resolución: solo se van los bordes que sobran.
+// Devuelve { image, width, height } o null si no se puede decodificar.
+async function recortarAlPapel(src, timeoutMs = 30000) {
+  const img = await cargarImagen(src, timeoutMs)
+  if (!img) return null
+  const w = img.naturalWidth
+  const h = img.naturalHeight
+  // El papel se orienta como la foto: vertical con vertical, horizontal con horizontal.
+  const objetivo = w >= h ? PROPORCION_PAPEL : 1 / PROPORCION_PAPEL
+  const actual = w / h
+
+  let recorteW = w
+  let recorteH = h
+  if (actual > objetivo) recorteW = Math.round(h * objetivo)   // sobra por los lados
+  else if (actual < objetivo) recorteH = Math.round(w / objetivo) // sobra por arriba y abajo
+
+  try {
+    const canvas = document.createElement('canvas')
+    canvas.width = recorteW
+    canvas.height = recorteH
+    canvas.getContext('2d').drawImage(
+      img,
+      Math.round((w - recorteW) / 2), Math.round((h - recorteH) / 2), recorteW, recorteH,
+      0, 0, recorteW, recorteH,
+    )
+    const salida = canvas.toDataURL('image/jpeg', 0.92)
+    canvas.width = 0
+    canvas.height = 0
+    return { image: salida, width: recorteW, height: recorteH }
+  } catch { return null }
+}
+
 // Lee un fichero tal cual y lo devuelve en base64, sin recodificar ni redimensionar: es lo
-// que hace la app Flutter (`base64Encode(await photo.readAsBytes())`).
+// que hace la app Flutter cuando el huésped PUBLICA la foto (al imprimir sí la recorta).
 function ficheroABase64(file) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader()
@@ -103,6 +136,14 @@ const CAMARA_HABILITADA = false
 const MAX_FOTOS = 80                                // tope de fotos por pedido
 const MAX_COPIAS = 20                               // copias de una misma foto
 const THUMB_SIZE = 320                              // miniatura: interfaz y e-mail a recepción
+// Recorte al formato del papel antes de imprimir, que es lo que hace la app Flutter:
+// captura la foto dentro de un marco 2:3 (vertical) o 3:2 (horizontal) con `BoxFit.cover`.
+// Sin esto, una foto de móvil (4:3) encajada en un papel 10x15 (3:2) sale con bandas
+// blancas a los lados. Recortar pierde ~11% de los bordes; a cambio llena el papel.
+// Un 10x15 es 3:2; si algún día se imprime en 15x20, esto pasaría a ser 4:3.
+const RECORTAR_AL_PAPEL = true
+const PROPORCION_PAPEL = 3 / 2
+
 const ANCHO_MONITOR = 1600                          // copia para el Monitor, que sólo se mira
 const CONCURRENCIA_ENVIO = 2                        // fotos en vuelo (manda el ancho de banda)
 const MAX_MINIATURAS_EMAIL = 12                     // el resto se resume: "y N fotos más"
@@ -813,11 +854,12 @@ export default function MobileApp() {
     }
 
     const subirFoto = async (photo) => {
-      const image = await leerOriginal(photo)
+      let image = await leerOriginal(photo)
       const orientation = photo.orientation || 'portrait'
-      // Si la red de seguridad redujo la foto, las medidas que se declaran son las de
-      // verdad: el redimensionado mantiene la proporción, así que basta con escalarlas.
-      const medidas = (() => {
+
+      // Recorte al formato del papel, lo último antes de subir. Si fallara, se manda la
+      // foto sin recortar: saldrá con bandas, pero el pedido no se pierde.
+      let medidas = (() => {
         const { width, height } = photo
         if (!width || !height) return {}
         const factor = image === photo.dataUrl ? 1 : Math.min(ANCHO_MAXIMO_SEGURO / width, ANCHO_MAXIMO_SEGURO / height, 1)
@@ -825,6 +867,13 @@ export default function MobileApp() {
           ? { width, height }
           : { width: Math.round(width * factor), height: Math.round(height * factor) }
       })()
+      if (RECORTAR_AL_PAPEL) {
+        const recortada = await recortarAlPapel(image)
+        if (recortada) {
+          image = recortada.image
+          medidas = { width: recortada.width, height: recortada.height }
+        }
+      }
       const copias = Math.min(Math.max(parseInt(photo.copies) || 1, 1), 3)
       // La foto se sube UNA vez y se piden N copias por dos vías que el Printer entiende:
       // `times` (lo que devuelve la API en photos_two) y el nombre `print_N_` (que usa como

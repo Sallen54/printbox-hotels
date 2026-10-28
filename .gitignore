@@ -20,5 +20,9 @@ config/hotels.xml
 config/session_secret.txt
 config/hotels/
 config/coupon_secret.txt
+# Config del despliegue, no del repo: el modelo multi-hotel usa config/hotels/<id>/ y estos
+# dos son el respaldo global. Llevaban dentro el código de evento de un hotel real.
+config/servidor_api.txt
+config/textos.txt
 config/printbox_pass.txt
 config/square.json

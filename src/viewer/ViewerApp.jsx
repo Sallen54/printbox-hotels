@@ -711,10 +711,6 @@ export default function ViewerApp() {
                         <div className="col-md-12">
                           <label className="form-label text-light">URL del servidor</label>
                           <input type="url" placeholder={SERVIDOR_POR_DEFECTO} className="form-control bg-black border-secondary text-light font-mono" value={adminServidor} disabled={!advancedUnlocked} onChange={e => setAdminServidor(e.target.value)} />
-                          <div className="form-text text-secondary">
-                            Dónde está el backend de Printbox. Solo se toca si el servidor habitual falla o va saturado
-                            y hay que apuntar a otro. En blanco usa <code>{SERVIDOR_POR_DEFECTO}</code>.
-                          </div>
                         </div>
                       </div>
                       {!advancedUnlocked && <div className="form-text text-secondary mt-2">Estos ajustes los cambia Printbox. Pulsa <b>Desbloquear</b> e introduce la contraseña.</div>}
