@@ -1,6 +1,0 @@
-servidor;http://gestion.printboxweb.com
-evento;ev-1581219
-evento_printer;
-timer;5
-impresora;
-delay;5
